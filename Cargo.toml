@@ -1,0 +1,8 @@
+[package]
+name = "squid-orbit-simulator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+sgp4 = "2.3.0"
