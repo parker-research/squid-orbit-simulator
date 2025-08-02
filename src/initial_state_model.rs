@@ -45,3 +45,13 @@ impl GroundStation {
         })
     }
 }
+
+pub struct Satellite {
+    pub name: String,
+
+    /// @brief Unitless drag coefficient of the satellite (C_d) for atmospheric drag calculations.
+    pub drag_coefficient: f64,
+
+    /// @brief Average cross-sectional area of the satellite (A) for atmospheric drag calculations.
+    pub drag_area_m2: f64,
+}

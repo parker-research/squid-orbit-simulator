@@ -66,7 +66,23 @@ pub fn calculate_elevation_angle_degrees(
     elevation_rad.to_degrees()
 }
 
+pub fn calculate_power_from_atmospheric_drag_watts(
+    satellite: &crate::initial_state_model::Satellite,
+    elevation_km: f64,
+    latitude_deg: Option<f64>,
+    longitude_deg: Option<f64>,
+    speed_m_per_s: f64,
+) -> f64 {
+    let (rho, _temp) =
+        satkit::nrlmsise::nrlmsise(elevation_km, latitude_deg, longitude_deg, Some(*t), true);
+
+    let power_watts =
+        0.5 * satellite.drag_coefficient * rho * satellite.drag_area_m2 * speed_m_per_s.powi(3);
+    power_watts
+}
+
 pub fn propagate_to_deorbit(
+    satellite: &crate::initial_state_model::Satellite,
     orbit_constants: &sgp4::Constants,
     max_hours: f64,
     ground_stations: &[crate::initial_state_model::GroundStation],
@@ -149,8 +165,15 @@ pub fn demo_deorbit() -> anyhow::Result<()> {
 
     println!("Using TLE constants:");
     println!("{:?}", constants);
+    println!();
+    println!();
 
     let max_hours: f64 = 24.0 * 365.0 * 100.0; // 100 years
+    let satellite = crate::initial_state_model::Satellite {
+        name: "Demo Satellite".to_owned(),
+        drag_coefficient: 2.5,
+        drag_area_m2: 10.0,
+    };
     let ground_stations = [crate::initial_state_model::GroundStation::new(
         "Rothney Astro Observatory".to_owned(),
         50.8684,
@@ -159,6 +182,6 @@ pub fn demo_deorbit() -> anyhow::Result<()> {
         2.5,
         5.0, // min_elevation_deg
     )];
-    propagate_to_deorbit(&constants, max_hours, &ground_stations)?;
+    propagate_to_deorbit(&satellite, &constants, max_hours, &ground_stations)?;
     Ok(())
 }
