@@ -24,19 +24,65 @@ pub fn pythag_3(vector: &[f64; 3]) -> f64 {
     f64::sqrt(vector[0].powi(2) + vector[1].powi(2) + vector[2].powi(2))
 }
 
-pub fn calculate_altitude_from_location_km(position_km: &[f64; 3]) -> f64 {
+/// Calculate the elevation (above sea level) in kilometers from the position vector in kilometers.
+pub fn calculate_elevation_from_location_km(position_km: &[f64; 3]) -> f64 {
     let earth_radius_km = sgp4::WGS84.ae; // Earth's radius in km
     let radius_km = pythag_3(position_km);
 
-    let altitude_km = radius_km - earth_radius_km;
-    altitude_km
+    let elevation_km = radius_km - earth_radius_km;
+    elevation_km
 }
 
-pub fn propagate_to_deorbit(constants: &sgp4::Constants, max_hours: f64) -> anyhow::Result<f64> {
+pub fn calculate_elevation_angle_degrees(
+    position_km: &[f64; 3],
+    ground_station: &crate::initial_state_model::GroundStation,
+) -> f64 {
+    let station_ecef_xyz_m = ground_station.ecef_xyz_m();
+    let vector_to_satellite_m = [
+        position_km[0] * 1000.0 - station_ecef_xyz_m[0],
+        position_km[1] * 1000.0 - station_ecef_xyz_m[1],
+        position_km[2] * 1000.0 - station_ecef_xyz_m[2],
+    ];
+
+    // Compute norms (magnitudes)
+    let norm_ground = (station_ecef_xyz_m.iter().map(|x| x * x).sum::<f64>()).sqrt();
+    let norm_los = (vector_to_satellite_m.iter().map(|x| x * x).sum::<f64>()).sqrt();
+
+    // Compute dot product of ground station vector and line-of-sight vector
+    let dot_product: f64 = station_ecef_xyz_m
+        .iter()
+        .zip(vector_to_satellite_m.iter())
+        .map(|(a, b)| a * b)
+        .sum();
+
+    // Angle between vectors
+    let cos_theta = dot_product / (norm_ground * norm_los);
+    let theta_rad = cos_theta.acos(); // This is the angle from zenith
+
+    // Convert to elevation angle: π/2 - θ (from zenith to elevation)
+    let elevation_rad = std::f64::consts::FRAC_PI_2 - theta_rad;
+
+    // Convert to degrees
+    elevation_rad.to_degrees()
+}
+
+pub fn propagate_to_deorbit(
+    orbit_constants: &sgp4::Constants,
+    max_hours: f64,
+    ground_stations: &[crate::initial_state_model::GroundStation],
+) -> anyhow::Result<f64> {
     let mut hours_since_epoch: f64 = 0.0;
 
     while hours_since_epoch < max_hours {
-        let prediction = constants.propagate(sgp4::MinutesSinceEpoch(hours_since_epoch * 60.0))?;
+        let prediction =
+            orbit_constants.propagate(sgp4::MinutesSinceEpoch(hours_since_epoch * 60.0))?;
+
+        let elevation_km = calculate_elevation_from_location_km(&prediction.position);
+
+        let elevation_angles_degrees = ground_stations
+            .iter()
+            .map(|station| calculate_elevation_angle_degrees(&prediction.position, station))
+            .collect::<Vec<_>>();
 
         // Print the current position and velocity.
         println!(
@@ -47,18 +93,36 @@ pub fn propagate_to_deorbit(constants: &sgp4::Constants, max_hours: f64) -> anyh
         println!(
             "Position = {:?} km = {:.2} km",
             prediction.position,
-            calculate_altitude_from_location_km(&prediction.position)
+            calculate_elevation_from_location_km(&prediction.position)
         );
         println!(
             "Velocity = {:?} km/s = {:.2} km/s",
             prediction.velocity,
             pythag_3(&prediction.velocity)
         );
+
+        // Assess the link to each ground station.
+        for (station, angle_deg) in ground_stations.iter().zip(elevation_angles_degrees) {
+            println!(
+                "Ground station \"{}\" -> {} Elevation: {:.2} degrees (Distance: {:.2} km)",
+                station.name,
+                (if angle_deg > station.min_elevation_deg {
+                    "✅"
+                } else {
+                    "❌"
+                }),
+                angle_deg,
+                pythag_3(&[
+                    prediction.position[0] - station.ecef_xyz_m()[0] / 1000.0,
+                    prediction.position[1] - station.ecef_xyz_m()[1] / 1000.0,
+                    prediction.position[2] - station.ecef_xyz_m()[2] / 1000.0,
+                ])
+            );
+        }
         println!();
 
-        let altitude_km = calculate_altitude_from_location_km(&prediction.position);
-
-        if altitude_km < 100.0 {
+        // Evaluate deorbit condition.
+        if elevation_km < 100.0 {
             println!(
                 "Deorbit achieved at {:.2} days = {:.2} years since epoch",
                 hours_since_epoch / 24.0,
@@ -66,7 +130,7 @@ pub fn propagate_to_deorbit(constants: &sgp4::Constants, max_hours: f64) -> anyh
             );
             println!(
                 "Final Position = {:?} km = {:.2} km",
-                prediction.position, altitude_km
+                prediction.position, elevation_km
             );
             println!("Final Velocity = {:?} km/s", prediction.velocity);
             return Ok(hours_since_epoch);
@@ -87,6 +151,14 @@ pub fn demo_deorbit() -> anyhow::Result<()> {
     println!("{:?}", constants);
 
     let max_hours: f64 = 24.0 * 365.0 * 100.0; // 100 years
-    propagate_to_deorbit(&constants, max_hours)?;
+    let ground_stations = [crate::initial_state_model::GroundStation::new(
+        "Rothney Astro Observatory".to_owned(),
+        50.8684,
+        -114.2910,
+        Some(1269.0),
+        2.5,
+        5.0, // min_elevation_deg
+    )];
+    propagate_to_deorbit(&constants, max_hours, &ground_stations)?;
     Ok(())
 }
