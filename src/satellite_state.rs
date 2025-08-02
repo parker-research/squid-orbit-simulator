@@ -3,6 +3,8 @@ use satkit::frametransform::qteme2itrf;
 use satkit::sgp4::{SGP4Error, sgp4};
 use satkit::tle::TLE;
 
+use crate::initial_state_model::Satellite;
+
 #[allow(dead_code)]
 pub fn get_sample_demo_tle() -> anyhow::Result<TLE> {
     let tle = TLE::load_3line(
@@ -31,6 +33,21 @@ pub fn get_sample_demo_tle_intelsat_902() -> anyhow::Result<TLE> {
         "2 26900   0.0164 266.5378 0003319  86.1794 182.2590  1.00273847 16981   9300.";
     let tle = TLE::load_3line(&line0.to_string(), &line1.to_string(), &line2.to_string())?;
     Ok(tle)
+}
+
+#[allow(dead_code)]
+pub fn get_sample_demo_tle_ideasat_at_start() -> anyhow::Result<(TLE, Satellite)> {
+    let tle = TLE::load_3line(
+        "IDEASSAT",
+        "1 47458U 21006AX  23069.16237104  .00027656  00000+0  12836-2 0  9998",
+        "2 47458  97.4050 127.9834 0010829  77.8960 282.3488 15.19943129117543",
+    )?;
+    let satellite = Satellite {
+        name: "IDEASAT".to_owned(),
+        drag_coefficient: 2.5,
+        drag_area_m2: (30.0e-2 * 30.0e-2), // 3U CubeSat with deployable solar panels
+    };
+    Ok((tle, satellite))
 }
 
 pub fn pythag_3(vector: &[f64; 3]) -> f64 {
@@ -162,14 +179,14 @@ pub fn propagate_to_deorbit(
         );
 
         println!(
-            "Time = {:.2} days = {:.2} years = {}",
+            "Time: TLE Epoch + {:.2} days = {:.2} years => UTC {}",
             hours_since_epoch / 24.0,
             hours_since_epoch / (24.0 * 365.0),
             time
         );
-        println!("Position = {}", position_itrf);
+        println!("Position: {}", position_itrf);
         println!(
-            "Position = {:?} km = {:.2} km = ({:.5}, {:.5}, h={:.3} km)",
+            "Position: {:?} km = {:.2} km = ({:.5}, {:.5}, h={:.3} km)",
             position_km,
             elevation_km,
             position_itrf.latitude_deg(),
@@ -177,7 +194,7 @@ pub fn propagate_to_deorbit(
             position_itrf.hae() / 1000.0
         );
         println!(
-            "Velocity = {:?} km/s = {:.2} km/s",
+            "Velocity: {:?} km/s = {:.2} km/s",
             [
                 velocity_itrf.itrf[0] / 1000.0,
                 velocity_itrf.itrf[1] / 1000.0,
@@ -186,7 +203,7 @@ pub fn propagate_to_deorbit(
             speed_m_per_s / 1000.0
         );
         println!(
-            "Drag power = {:.3} W (Elevation: {:.2} km, Speed: {:.2} km/s)",
+            "Drag Power: {:.3} W (Elevation: {:.2} km, Speed: {:.2} km/s)",
             drag_power_watts,
             elevation_km,
             speed_m_per_s / 1000.0
@@ -230,17 +247,18 @@ pub fn propagate_to_deorbit(
 }
 
 pub fn demo_deorbit() -> anyhow::Result<()> {
-    let tle = get_sample_demo_tle()?;
+    // let tle = get_sample_demo_tle()?;
+    // let satellite = crate::initial_state_model::Satellite {
+    //     name: "Demo Satellite".to_owned(),
+    //     drag_coefficient: 2.5,
+    //     drag_area_m2: (10.0e-2 * 10.0e-2), // 10 cm x 10 cm cross-sectional area
+    // };
+    let (tle, satellite) = get_sample_demo_tle_ideasat_at_start()?;
 
     let simulation_settings = crate::initial_state_model::SimulationSettings {
         max_days: 365.0 * 100.0,
-        step_interval_hours: 1.0,
+        step_interval_hours: 1.0 / 60.0,
         drag_power_enable_space_weather: true,
-    };
-    let satellite = crate::initial_state_model::Satellite {
-        name: "Demo Satellite".to_owned(),
-        drag_coefficient: 2.5,
-        drag_area_m2: (10.0e-2 * 10.0e-2), // 10 cm x 10 cm cross-sectional area
     };
     let ground_stations = [crate::initial_state_model::GroundStation::new(
         "Rothney Astro Observatory".to_owned(),
