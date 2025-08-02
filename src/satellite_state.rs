@@ -86,9 +86,10 @@ pub fn calculate_power_from_atmospheric_drag_watts(
     longitude_deg: Option<f64>,
     speed_m_per_s: f64,
     time: Option<satkit::Instant>,
+    enable_space_weather: bool,
 ) -> f64 {
     let (rho_density_kg_per_m3, _temperature_kelvin) = // TODO: Encorporate space weather data by passing in a date.
-        satkit::nrlmsise::nrlmsise(elevation_km, latitude_deg, longitude_deg, time, true);
+        satkit::nrlmsise::nrlmsise(elevation_km, latitude_deg, longitude_deg, time, enable_space_weather);
 
     let power_watts = 0.5
         * satellite.drag_coefficient
@@ -99,9 +100,9 @@ pub fn calculate_power_from_atmospheric_drag_watts(
 }
 
 pub fn propagate_to_deorbit(
+    simulation_settings: &crate::initial_state_model::SimulationSettings,
     satellite: &crate::initial_state_model::Satellite,
     tle: &TLE,
-    max_hours: f64,
     ground_stations: &[crate::initial_state_model::GroundStation],
 ) -> anyhow::Result<f64> {
     let epoch = tle.epoch;
@@ -110,7 +111,7 @@ pub fn propagate_to_deorbit(
 
     let mut tle_mut = tle.clone();
 
-    while hours_since_epoch < max_hours {
+    while hours_since_epoch < simulation_settings.max_days * 24.0 {
         let time = epoch + satkit::Duration::from_hours(hours_since_epoch);
 
         // SGP4 runs on a slice of times
@@ -157,6 +158,7 @@ pub fn propagate_to_deorbit(
             Some(position_itrf.longitude_deg()),
             speed_m_per_s,
             Some(time),
+            simulation_settings.drag_power_enable_space_weather,
         );
 
         println!(
@@ -219,7 +221,7 @@ pub fn propagate_to_deorbit(
             return Ok(hours_since_epoch);
         }
 
-        hours_since_epoch += 1.0;
+        hours_since_epoch += simulation_settings.step_interval_hours;
     }
 
     Err(anyhow::anyhow!(
@@ -230,7 +232,11 @@ pub fn propagate_to_deorbit(
 pub fn demo_deorbit() -> anyhow::Result<()> {
     let tle = get_sample_demo_tle()?;
 
-    let max_hours: f64 = 24.0 * 365.0 * 100.0;
+    let simulation_settings = crate::initial_state_model::SimulationSettings {
+        max_days: 365.0 * 100.0,
+        step_interval_hours: 1.0,
+        drag_power_enable_space_weather: true,
+    };
     let satellite = crate::initial_state_model::Satellite {
         name: "Demo Satellite".to_owned(),
         drag_coefficient: 2.5,
@@ -250,6 +256,6 @@ pub fn demo_deorbit() -> anyhow::Result<()> {
     println!("{:?}", tle);
     println!();
 
-    propagate_to_deorbit(&satellite, &tle, max_hours, &ground_stations)?;
+    propagate_to_deorbit(&simulation_settings, &satellite, &tle, &ground_stations)?;
     Ok(())
 }

@@ -55,3 +55,11 @@ pub struct Satellite {
     /// @brief Average cross-sectional area of the satellite (A) for atmospheric drag calculations.
     pub drag_area_m2: f64,
 }
+
+pub struct SimulationSettings {
+    pub max_days: f64,
+
+    pub step_interval_hours: f64,
+
+    pub drag_power_enable_space_weather: bool,
+}
