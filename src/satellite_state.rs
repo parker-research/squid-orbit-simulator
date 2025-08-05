@@ -1,7 +1,11 @@
 use satkit::ITRFCoord;
+use satkit::consts::{EARTH_RADIUS, SUN_RADIUS, WGS84_A};
+use satkit::frametransform::qgcrf2itrf;
 use satkit::frametransform::qteme2itrf;
+use satkit::lpephem::sun::pos_gcrf;
 use satkit::sgp4::{SGP4Error, sgp4};
 use satkit::tle::TLE;
+use satkit::{Instant, types::Vec3};
 
 use crate::initial_state_model::Satellite;
 
@@ -56,13 +60,25 @@ pub fn pythag_3(vector: &[f64; 3]) -> f64 {
 
 /// Calculate the elevation (above sea level) in kilometers from the position vector in kilometers.
 pub fn calculate_elevation_from_location_km(position_km: &[f64; 3]) -> f64 {
-    let earth_radius_km = sgp4::WGS84.ae; // Earth's radius in km
+    let earth_radius_km = EARTH_RADIUS / 1000.0;
     let radius_km = pythag_3(position_km);
 
     let elevation_km = radius_km - earth_radius_km;
     elevation_km
 }
 
+/// Compute the satellite's local solar time in hours [0, 24).
+pub fn calculate_local_solar_time_hours(longitude_deg: f64, time: &Instant) -> f64 {
+    let jd = time.as_jd() + 0.5; // jd=0.0 happens at 12:00 UTC
+    let fractional_day = jd.fract();
+    let utc_hours = fractional_day * 24.0;
+    let local_time = utc_hours + longitude_deg / 15.0;
+    (local_time + 24.0) % 24.0
+}
+
+/// Calculate the elevation angle in degrees from a satellite's position to a ground station.
+/// The elevation angle is the angle above the local horizontal plane at the ground station.
+/// When >= 0 degrees, the satellite is above the horizon, and the ground station can communicate with it.
 pub fn calculate_elevation_angle_degrees(
     position_km: &[f64; 3],
     ground_station: &crate::initial_state_model::GroundStation,
@@ -114,6 +130,126 @@ pub fn calculate_power_from_atmospheric_drag_watts(
         * satellite.drag_area_m2
         * speed_m_per_s.powi(3);
     power_watts
+}
+
+/// Estimate solar irradiance (W/m²) at the satellite's location, accounting for eclipse by Earth.
+///
+/// Returns 1361.0 in full sunlight, 0.0 in umbra, or a partial value in penumbra.
+pub fn calculate_sun_irradiance_received_approx_w_per_m2(
+    satellite_position_itrf_m: &[f64; 3],
+    time: &Instant,
+) -> f64 {
+    const SOLAR_CONSTANT_W_PER_M2: f64 = 1361.0;
+    // FIXME: This function appears to not work, and must be revisited/reimplemented/re-evaluated.
+
+    // Step 1: Get Sun position in GCRF (in meters).
+    let sun_gcrf_m: Vec3 = pos_gcrf(time);
+
+    // Step 2: Transform Sun position from GCRF to ITRF.
+    let transform_gcrf_to_itrf = qgcrf2itrf(time).to_rotation_matrix();
+    let sun_itrf_m = transform_gcrf_to_itrf * sun_gcrf_m;
+
+    // Step 3: Compute unit vectors and geometry.
+    let sat_itrf_vec = nalgebra::Vector3::<f64>::from_row_slice(satellite_position_itrf_m);
+    // Note: Must reconstruct the following as different nalgebra versions are used across crates.
+    let sun_itrf_vec = nalgebra::Vector3::<f64>::from_row_slice(sun_itrf_m.as_slice());
+
+    let sat_mag_m = sat_itrf_vec.norm(); // Distance from Earth center to Satellite.
+    let sun_mag_m = sun_itrf_vec.norm(); // Distance from Earth center to Sun.
+
+    // Angle between Earth→Sat vector and Earth→Sun vector.
+    let cos_theta = (sat_itrf_vec.dot(&sun_itrf_vec) / (sat_mag_m * sun_mag_m)).clamp(-1.0, 1.0);
+    let sun_earth_sat_angle_rad = cos_theta.acos();
+
+    assert!(
+        sun_mag_m > 0.9 * 1.496e11 && sun_mag_m < 1.1 * 1.496e11,
+        "Sun-Earth distance is not within expected range (1 AU)."
+    );
+    assert!(
+        sat_mag_m > EARTH_RADIUS && sat_mag_m < 5.0 * EARTH_RADIUS,
+        "Satellite distance is not within expected range (above Earth's surface, max 5 Earth radii)."
+    );
+
+    // Angular radii.
+    let alpha = (SUN_RADIUS / sun_mag_m).asin(); // Sun's angular radius
+    let beta = (WGS84_A / sat_mag_m).asin(); // Earth's angular radius
+
+    if sun_earth_sat_angle_rad < alpha - beta {
+        // Full sunlight.
+        SOLAR_CONSTANT_W_PER_M2
+    } else if sun_earth_sat_angle_rad < alpha + beta {
+        // Partial shadow (penumbra) - crude linear taper.
+        // let visible_fraction =
+        //     1.0 - ((sun_earth_sat_angle_rad - (alpha - beta)) / (2.0 * beta)).clamp(0.0, 1.0);
+
+        let delta = sun_earth_sat_angle_rad - (alpha - beta);
+        let visible_fraction = 1.0 - (delta / (2.0 * beta)).powi(2).clamp(0.0, 1.0);
+        visible_fraction * SOLAR_CONSTANT_W_PER_M2
+    } else {
+        // Full umbra.
+        0.0
+    }
+}
+
+/// Estimate solar irradiance (W/m²) at the satellite's location, accounting for eclipse by Earth.
+///
+/// Returns 1361.0 in full sunlight, 0.0 in umbra, or a partial value in penumbra.
+pub fn calculate_sun_irradiance_received_w_per_m2(
+    satellite_position_itrf_m: &[f64; 3],
+    time: &Instant,
+) -> f64 {
+    const SOLAR_CONSTANT_W_PER_M2: f64 = 1361.0;
+
+    let sun_itrf_m = {
+        // Step 1: Get Sun position in GCRF (in meters).
+        let sun_gcrf_m: Vec3 = pos_gcrf(time);
+        // Step 2: Transform Sun position from GCRF to ITRF.
+        let transform_gcrf_to_itrf = qgcrf2itrf(time).to_rotation_matrix();
+        transform_gcrf_to_itrf * sun_gcrf_m
+    };
+
+    // Step 3: Compute unit vectors and geometry.
+    let sat_itrf_vec = nalgebra::Vector3::<f64>::from_row_slice(satellite_position_itrf_m);
+    // Note: Must reconstruct the following as different nalgebra versions are used across crates.
+    let sun_itrf_vec = nalgebra::Vector3::<f64>::from_row_slice(sun_itrf_m.as_slice());
+
+    let sat_mag_m = sat_itrf_vec.norm(); // Distance from Earth center to Satellite.
+    let sun_mag_m = sun_itrf_vec.norm(); // Distance from Earth center to Sun.
+
+    assert!(
+        sun_mag_m > 0.9 * 1.496e11 && sun_mag_m < 1.1 * 1.496e11,
+        "Sun-Earth distance is not within expected range (1 AU)."
+    );
+    assert!(
+        sat_mag_m > EARTH_RADIUS && sat_mag_m < 5.0 * EARTH_RADIUS,
+        "Satellite distance is not within expected range (above Earth's sea level, max 5 Earth radii)."
+    );
+
+    let r_hat = sun_itrf_vec / sun_mag_m; // unit vector Earth → Sun
+    let proj_length = sat_itrf_vec.dot(&r_hat); // distance along Earth→Sun axis
+    let perpendicular_vector = sat_itrf_vec - proj_length * r_hat;
+    let perpendicular_dist = perpendicular_vector.norm();
+
+    let theta_umbra = (EARTH_RADIUS - SUN_RADIUS) / sun_mag_m; // small angle approximation // TODO: Use real calc.
+    let r_umbra = (proj_length - sun_mag_m) * theta_umbra;
+    let theta_penumbra = (EARTH_RADIUS + SUN_RADIUS) / sun_mag_m;
+    let r_penumbra = (proj_length - sun_mag_m) * theta_penumbra;
+
+    if proj_length < 0.0 {
+        // Satellite is between Earth and Sun → always in sunlight.
+        SOLAR_CONSTANT_W_PER_M2
+    } else if perpendicular_dist < r_umbra {
+        // Inside umbra
+        0.0
+    } else if perpendicular_dist < r_penumbra {
+        // Inside penumbra
+        let fraction = (perpendicular_dist - r_umbra) / (r_penumbra - r_umbra);
+        let visible_fraction = 1.0 - fraction.clamp(0.0, 1.0);
+        visible_fraction * SOLAR_CONSTANT_W_PER_M2
+    } else {
+        // Outside shadow cones → full sunlight
+        SOLAR_CONSTANT_W_PER_M2
+    }
 }
 
 pub fn propagate_to_deorbit(
@@ -178,11 +314,17 @@ pub fn propagate_to_deorbit(
             simulation_settings.drag_power_enable_space_weather,
         );
 
+        let local_time_hours: f64 =
+            calculate_local_solar_time_hours(position_itrf.longitude_deg(), &time);
+
         println!(
-            "Time: TLE Epoch + {:.2} days = {:.2} years => UTC {}",
+            "Time: TLE Epoch + {:.2} days = {:.2} years => UTC {} => Local Time: {:.2}h = {}:{:02}",
             hours_since_epoch / 24.0,
             hours_since_epoch / (24.0 * 365.0),
-            time
+            time,
+            local_time_hours,
+            local_time_hours.floor() as u32,
+            (local_time_hours % 1.0 * 60.0).round() as u32
         );
         println!("Position: {}", position_itrf);
         println!(
@@ -207,6 +349,30 @@ pub fn propagate_to_deorbit(
             drag_power_watts,
             elevation_km,
             speed_m_per_s / 1000.0
+        );
+        let irradiance_approx_w_per_m2 = calculate_sun_irradiance_received_approx_w_per_m2(
+            &[
+                position_itrf.itrf[0],
+                position_itrf.itrf[1],
+                position_itrf.itrf[2],
+            ],
+            &time,
+        );
+        let irradiance_w_per_m2 = calculate_sun_irradiance_received_w_per_m2(
+            &[
+                position_itrf.itrf[0],
+                position_itrf.itrf[1],
+                position_itrf.itrf[2],
+            ],
+            &time,
+        );
+        println!(
+            "Solar Irradiance (Way 1, Approx): {:.2} W/m²",
+            irradiance_approx_w_per_m2
+        );
+        println!(
+            "Solar Irradiance (Way 2, Cones): {:.2} W/m²",
+            irradiance_w_per_m2
         );
 
         for (station, angle_deg) in ground_stations.iter().zip(elevation_angles_degrees) {
