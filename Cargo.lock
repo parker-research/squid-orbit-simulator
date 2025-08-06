@@ -3164,9 +3164,9 @@ dependencies = [
 
 [[package]]
 name = "satkit"
-version = "0.5.6"
+version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94bd20a1396362e59932b7d336ae20950f7e549e712d0488e911ed77c7622457"
+checksum = "40651672c7d943d5adc8f2750ee56e9715cf87f552690325532a2a98e569699a"
 dependencies = [
  "anyhow",
  "cc",
@@ -3183,7 +3183,7 @@ dependencies = [
  "serde",
  "serde-pickle",
  "simba 0.9.0",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
  "ureq",
 ]
 
@@ -3575,11 +3575,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.12"
+version = "2.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
+checksum = "0b0949c3a6c842cbde3f1686d6eea5a010516deb7085f79db747562d4102f41e"
 dependencies = [
- "thiserror-impl 2.0.12",
+ "thiserror-impl 2.0.14",
 ]
 
 [[package]]
@@ -3595,9 +3595,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.12"
+version = "2.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
+checksum = "cc5b44b4ab9c2fdd0e0512e6bece8388e214c0749f5862b114cc5b7a25daf227"
 dependencies = [
  "proc-macro2",
  "quote",

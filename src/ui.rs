@@ -10,6 +10,7 @@ use strum_macros::EnumIter;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    TleLine0Changed(String),
     TleLine1Changed(String),
     TleLine2Changed(String),
     OrbitalParamChanged(OrbitalField, String),
@@ -26,8 +27,23 @@ pub enum OrbitalField {
     Epoch,
 }
 
+impl OrbitalField {
+    pub fn display_label(&self) -> &'static str {
+        match self {
+            OrbitalField::Inclination => "Inclination (deg)",
+            OrbitalField::Raan => "RAAN (deg)",
+            OrbitalField::Eccentricity => "Eccentricity",
+            OrbitalField::ArgOfPerigee => "Argument of Perigee (deg)",
+            OrbitalField::MeanAnomaly => "Mean Anomaly (deg)",
+            OrbitalField::MeanMotion => "Mean Motion (rev/day)",
+            OrbitalField::Epoch => "Epoch (Julian)",
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct MyApp {
+    tle_line0: String,
     tle_line1: String,
     tle_line2: String,
     tle: Option<TLE>,
@@ -37,6 +53,9 @@ pub struct MyApp {
 impl MyApp {
     pub fn update(&mut self, message: Message) {
         match message {
+            Message::TleLine0Changed(text) => {
+                self.tle_line0 = text;
+            }
             Message::TleLine1Changed(text) => {
                 self.tle_line1 = text;
                 self.try_parse_tle();
@@ -84,25 +103,40 @@ impl MyApp {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let tle_inputs = column![
-            text("TLE Line 1"),
-            text_input("TLE Line 1", &self.tle_line1).on_input(Message::TleLine1Changed),
-            text("TLE Line 2"),
-            text_input("TLE Line 2", &self.tle_line2).on_input(Message::TleLine2Changed),
+        let tle_inputs = vec![
+            row![
+                text("TLE Line 0 (Name)").width(100),
+                text_input::<Message, iced::Theme, Renderer>("TLE Line 0", &self.tle_line0)
+                    .on_input(Message::TleLine0Changed),
+            ]
+            .into(),
+            row![
+                text("TLE Line 1").width(100),
+                text_input::<Message, iced::Theme, Renderer>("TLE Line 1", &self.tle_line1)
+                    .on_input(Message::TleLine1Changed),
+            ]
+            .into(),
+            row![
+                text("TLE Line 2").width(100),
+                text_input::<Message, iced::Theme, Renderer>("TLE Line 2", &self.tle_line2)
+                    .on_input(Message::TleLine2Changed),
+            ]
+            .into(),
         ];
 
         let param_inputs = OrbitalField::iter().map(|field| {
-            let label = format!("{:?}", field);
+            let label = field.display_label();
             let value = self.orbital_params.get(&field).cloned().unwrap_or_default();
             row![
-                text_input::<Message, iced::Theme, Renderer>(&label, &value)
+                text(label).width(150),
+                text_input::<Message, iced::Theme, Renderer>(label, &value)
                     .on_input(move |val| Message::OrbitalParamChanged(field.clone(), val))
             ]
             .into()
         });
 
         column![
-            tle_inputs,
+            column(tle_inputs).spacing(10),
             column(param_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(10)
         ]
         .into()
