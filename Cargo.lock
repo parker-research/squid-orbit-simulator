@@ -3164,9 +3164,8 @@ dependencies = [
 
 [[package]]
 name = "satkit"
-version = "0.5.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94bd20a1396362e59932b7d336ae20950f7e549e712d0488e911ed77c7622457"
+version = "0.7.3"
+source = "git+https://github.com/DeflateAwning/satkit#6328412a1f3cb1666ffa93bab5065d315ebe9eae"
 dependencies = [
  "anyhow",
  "cc",

@@ -26,6 +26,20 @@ pub enum OrbitalField {
     Epoch,
 }
 
+impl OrbitalField {
+    pub fn display_label(&self) -> &'static str {
+        match self {
+            OrbitalField::Inclination => "Inclination (deg)",
+            OrbitalField::Raan => "RAAN (deg)",
+            OrbitalField::Eccentricity => "Eccentricity",
+            OrbitalField::ArgOfPerigee => "Argument of Perigee (deg)",
+            OrbitalField::MeanAnomaly => "Mean Anomaly (deg)",
+            OrbitalField::MeanMotion => "Mean Motion (rev/day)",
+            OrbitalField::Epoch => "Epoch (Julian)",
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct MyApp {
     tle_line1: String,
@@ -84,25 +98,34 @@ impl MyApp {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let tle_inputs = column![
-            text("TLE Line 1"),
-            text_input("TLE Line 1", &self.tle_line1).on_input(Message::TleLine1Changed),
-            text("TLE Line 2"),
-            text_input("TLE Line 2", &self.tle_line2).on_input(Message::TleLine2Changed),
+        let tle_inputs = vec![
+            row![
+                text("TLE Line 1").width(50),
+                text_input::<Message, iced::Theme, Renderer>("TLE Line 1", &self.tle_line1)
+                    .on_input(Message::TleLine1Changed),
+            ]
+            .into(),
+            row![
+                text("TLE Line 2").width(50),
+                text_input::<Message, iced::Theme, Renderer>("TLE Line 2", &self.tle_line2)
+                    .on_input(Message::TleLine2Changed),
+            ]
+            .into(),
         ];
 
         let param_inputs = OrbitalField::iter().map(|field| {
-            let label = format!("{:?}", field);
+            let label = field.display_label();
             let value = self.orbital_params.get(&field).cloned().unwrap_or_default();
             row![
-                text_input::<Message, iced::Theme, Renderer>(&label, &value)
+                text(label).width(150),
+                text_input::<Message, iced::Theme, Renderer>(label, &value)
                     .on_input(move |val| Message::OrbitalParamChanged(field.clone(), val))
             ]
             .into()
         });
 
         column![
-            tle_inputs,
+            column(tle_inputs).spacing(10),
             column(param_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(10)
         ]
         .into()
