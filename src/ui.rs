@@ -10,6 +10,7 @@ use strum_macros::EnumIter;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    TleLine0Changed(String),
     TleLine1Changed(String),
     TleLine2Changed(String),
     OrbitalParamChanged(OrbitalField, String),
@@ -42,6 +43,7 @@ impl OrbitalField {
 
 #[derive(Debug, Default)]
 pub struct MyApp {
+    tle_line0: String,
     tle_line1: String,
     tle_line2: String,
     tle: Option<TLE>,
@@ -51,6 +53,9 @@ pub struct MyApp {
 impl MyApp {
     pub fn update(&mut self, message: Message) {
         match message {
+            Message::TleLine0Changed(text) => {
+                self.tle_line0 = text;
+            }
             Message::TleLine1Changed(text) => {
                 self.tle_line1 = text;
                 self.try_parse_tle();
@@ -100,13 +105,19 @@ impl MyApp {
     fn view(&self) -> Element<'_, Message> {
         let tle_inputs = vec![
             row![
-                text("TLE Line 1").width(50),
+                text("TLE Line 0 (Name)").width(100),
+                text_input::<Message, iced::Theme, Renderer>("TLE Line 0", &self.tle_line0)
+                    .on_input(Message::TleLine0Changed),
+            ]
+            .into(),
+            row![
+                text("TLE Line 1").width(100),
                 text_input::<Message, iced::Theme, Renderer>("TLE Line 1", &self.tle_line1)
                     .on_input(Message::TleLine1Changed),
             ]
             .into(),
             row![
-                text("TLE Line 2").width(50),
+                text("TLE Line 2").width(100),
                 text_input::<Message, iced::Theme, Renderer>("TLE Line 2", &self.tle_line2)
                     .on_input(Message::TleLine2Changed),
             ]
