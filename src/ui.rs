@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use iced::{
     Element, Renderer,
-    widget::{column, row, text, text_input},
+    widget::{button, column, row, text, text_input},
 };
 use satkit::TLE;
 use strum::IntoEnumIterator;
@@ -14,6 +14,7 @@ pub enum Message {
     TleLine1Changed(String),
     TleLine2Changed(String),
     OrbitalParamChanged(OrbitalField, String),
+    ButtonPressedRun,
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter)]
@@ -36,7 +37,7 @@ impl OrbitalField {
             OrbitalField::ArgOfPerigee => "Argument of Perigee (deg)",
             OrbitalField::MeanAnomaly => "Mean Anomaly (deg)",
             OrbitalField::MeanMotion => "Mean Motion (rev/day)",
-            OrbitalField::Epoch => "Epoch (Julian)",
+            OrbitalField::Epoch => "Epoch",
         }
     }
 }
@@ -48,6 +49,9 @@ pub struct MyApp {
     tle_line2: String,
     tle: Option<TLE>,
     orbital_params: HashMap<OrbitalField, String>,
+
+    /// Status message to display the result of the last run.
+    run_status: String,
 }
 
 impl MyApp {
@@ -67,6 +71,9 @@ impl MyApp {
             Message::OrbitalParamChanged(field, value) => {
                 self.orbital_params.insert(field.clone(), value.clone());
                 self.update_tle_from_fields();
+            }
+            Message::ButtonPressedRun => {
+                self.on_button_pressed_run();
             }
         }
     }
@@ -88,6 +95,12 @@ impl MyApp {
                 .insert(OrbitalField::MeanAnomaly, format!("{}", tle.mean_anomaly));
             self.orbital_params
                 .insert(OrbitalField::MeanMotion, format!("{}", tle.mean_motion));
+            self.orbital_params
+                .insert(OrbitalField::Epoch, format!("{}", tle.epoch.as_iso8601()));
+            self.run_status.clear();
+        } else {
+            self.tle = None;
+            self.run_status = "Invalid TLE.".to_string();
         }
     }
 
@@ -99,6 +112,49 @@ impl MyApp {
                 }
             }
             // Repeat for other fields...
+            if let Some(val) = self.orbital_params.get(&OrbitalField::Raan) {
+                if let Ok(v) = val.parse() {
+                    tle.raan = v;
+                }
+            }
+            if let Some(val) = self.orbital_params.get(&OrbitalField::Eccentricity) {
+                if let Ok(v) = val.parse() {
+                    tle.eccen = v;
+                }
+            }
+            if let Some(val) = self.orbital_params.get(&OrbitalField::ArgOfPerigee) {
+                if let Ok(v) = val.parse() {
+                    tle.arg_of_perigee = v;
+                }
+            }
+            if let Some(val) = self.orbital_params.get(&OrbitalField::MeanAnomaly) {
+                if let Ok(v) = val.parse() {
+                    tle.mean_anomaly = v;
+                }
+            }
+            if let Some(val) = self.orbital_params.get(&OrbitalField::MeanMotion) {
+                if let Ok(v) = val.parse() {
+                    tle.mean_motion = v;
+                }
+            }
+        }
+    }
+
+    fn on_button_pressed_run(&mut self) {
+        // TODO(Parker): Replace this with your actual simulation / propagation call.
+        if let Some(tle) = &self.tle {
+            self.run_status = format!(
+                "Ran with TLE '{}': i={:.6}°, RAAN={:.6}°, e={:.7}, ω={:.6}°, M={:.6}°, n={:.8} rev/day",
+                self.tle_line0.trim(),
+                tle.inclination,
+                tle.raan,
+                tle.eccen,
+                tle.arg_of_perigee,
+                tle.mean_anomaly,
+                tle.mean_motion
+            );
+        } else {
+            self.run_status = "Nothing to run - please enter a valid TLE.".to_string();
         }
     }
 
@@ -135,10 +191,21 @@ impl MyApp {
             .into()
         });
 
+        // Bottom bar with Run button + status.
+        let run_bar = row![
+            button::<Message, iced::Theme, Renderer>(text("Run"))
+                // disable until TLE is valid/parsed
+                .on_press_maybe(self.tle.as_ref().map(|_| Message::ButtonPressedRun)),
+            text(&self.run_status),
+        ]
+        .spacing(12);
+
         column![
             column(tle_inputs).spacing(10),
-            column(param_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(10)
+            column(param_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(10),
+            run_bar
         ]
+        .spacing(16)
         .into()
     }
 }
