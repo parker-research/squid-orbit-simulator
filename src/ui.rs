@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use iced::{
     Element, Renderer,
-    widget::{button, checkbox, column, horizontal_rule, row, text, text_input},
+    widget::{button, checkbox, column, horizontal_rule, row, scrollable, text, text_input},
 };
 use satkit::TLE;
 use strum::IntoEnumIterator;
@@ -566,32 +566,35 @@ impl MyApp {
         ]
         .spacing(12);
 
-        // Layout
-        column![
-            // TLE + Orbital
-            text("TLE").size(22),
-            column(tle_inputs).spacing(8),
-            horizontal_rule(1),
-            text("Orbital Parameters").size(22),
-            column(param_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
-            horizontal_rule(1),
-            // Ground Station
-            text("Ground Station").size(22),
-            column(gs_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
-            horizontal_rule(1),
-            // Satellite
-            text("Satellite").size(22),
-            column(sat_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
-            horizontal_rule(1),
-            // Simulation Settings
-            text("Simulation Settings").size(22),
-            column(sim_number_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
-            column(sim_bool_row.collect::<Vec<Element<'_, Message>>>()).spacing(8),
-            horizontal_rule(1),
-            // Run
-            run_bar
-        ]
-        .spacing(16)
+        // Layout.
+        scrollable(
+            column![
+                // TLE + Orbital
+                text("TLE").size(22),
+                column(tle_inputs).spacing(8),
+                horizontal_rule(1),
+                text("Orbital Parameters").size(22),
+                column(param_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
+                horizontal_rule(1),
+                // Ground Station
+                text("Ground Station").size(22),
+                column(gs_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
+                horizontal_rule(1),
+                // Satellite
+                text("Satellite").size(22),
+                column(sat_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
+                horizontal_rule(1),
+                // Simulation Settings
+                text("Simulation Settings").size(22),
+                column(sim_number_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
+                column(sim_bool_row.collect::<Vec<Element<'_, Message>>>()).spacing(8),
+                horizontal_rule(1),
+                // Run
+                run_bar
+            ]
+            .spacing(16)
+            .padding(16),
+        )
         .into()
     }
 }
