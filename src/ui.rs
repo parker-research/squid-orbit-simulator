@@ -389,6 +389,13 @@ impl MyApp {
                 .get(&SimulationBoolField::DragPowerEnableSpaceWeather)
                 .unwrap_or(&false);
 
+            if max_days <= 0.0 {
+                return Err("Max Days must be > 0".into());
+            }
+            if step_hours <= 0.0 {
+                return Err("Step Interval (hours) must be > 0".into());
+            }
+
             Ok(SimulationSettings {
                 max_days,
                 step_interval_hours: step_hours,
@@ -405,29 +412,52 @@ impl MyApp {
                 self.run_status = "Nothing to run - please enter a valid TLE.".to_string();
             }
             (Ok(gs), Ok(sat), Ok(sim), Some(tle)) => {
-                // TODO(Parker): use gs/sat/sim + tle with your actual simulation.
-                self.run_status = format!(
-                    "Ran with:\n  GS: {} (lat {:.4}°, lon {:.4}°, elev {:?} m, alt {:.2} m, minEl {:.2}°)\n  SAT: {} (Cd {:.3}, Area {:.3} m²)\n  SIM: max_days {:.3}, step {:.3} h, space_weather {}\n  TLE '{}': i={:.6}°, RAAN={:.6}°, e={:.7}, ω={:.6}°, M={:.6}°, n={:.8} rev/day",
-                    gs.name,
+                // Convert UI structs to your domain types and run the real simulator.
+                let gs_dom = crate::initial_state_model::GroundStation::new(
+                    gs.name.clone(),
                     gs.latitude_deg,
                     gs.longitude_deg,
                     gs.elevation_m,
                     gs.altitude_m,
                     gs.min_elevation_deg,
-                    sat.name,
-                    sat.drag_coefficient,
-                    sat.drag_area_m2,
-                    sim.max_days,
-                    sim.step_interval_hours,
-                    sim.drag_power_enable_space_weather,
-                    self.tle_line0.trim(),
-                    tle.inclination,
-                    tle.raan,
-                    tle.eccen,
-                    tle.arg_of_perigee,
-                    tle.mean_anomaly,
-                    tle.mean_motion
                 );
+
+                let sat_dom = crate::initial_state_model::Satellite {
+                    name: sat.name.clone(),
+                    drag_coefficient: sat.drag_coefficient,
+                    drag_area_m2: sat.drag_area_m2,
+                };
+
+                let sim_dom = crate::initial_state_model::SimulationSettings {
+                    max_days: sim.max_days,
+                    step_interval_hours: sim.step_interval_hours,
+                    drag_power_enable_space_weather: sim.drag_power_enable_space_weather,
+                };
+
+                let ground_stations = [gs_dom];
+
+                match crate::satellite_state::propagate_to_deorbit(
+                    &sim_dom,
+                    &sat_dom,
+                    tle,
+                    &ground_stations,
+                ) {
+                    Ok(days_to_deorbit) => {
+                        self.run_status = format!(
+                            "Simulation complete: deorbit in {:.3} days.\n\
+                         GS: {} | SAT: {} | step={:.4} h | max_days={:.1} | space_weather={}",
+                            days_to_deorbit,
+                            gs.name,
+                            sat.name,
+                            sim.step_interval_hours,
+                            sim.max_days,
+                            sim.drag_power_enable_space_weather
+                        );
+                    }
+                    Err(err) => {
+                        self.run_status = format!("Simulation failed: {err}");
+                    }
+                }
             }
         }
     }
