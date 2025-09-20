@@ -1,5 +1,7 @@
 use once_cell::unsync::OnceCell;
+use satkit::TLE;
 
+#[derive(Debug, Clone)]
 pub struct GroundStation {
     pub name: String,
     pub latitude_deg: f64,
@@ -46,6 +48,7 @@ impl GroundStation {
     }
 }
 
+#[derive(Debug)]
 pub struct Satellite {
     pub name: String,
 
@@ -56,10 +59,19 @@ pub struct Satellite {
     pub drag_area_m2: f64,
 }
 
+#[derive(Debug)]
 pub struct SimulationSettings {
     pub max_days: f64,
 
     pub step_interval_hours: f64,
 
     pub drag_power_enable_space_weather: bool,
+}
+
+#[derive(Debug)]
+pub struct InitialSimulationState {
+    pub tle: TLE,
+    pub ground_stations: Vec<GroundStation>,
+    pub satellite: Satellite,
+    pub simulation_settings: SimulationSettings,
 }

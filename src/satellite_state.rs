@@ -7,7 +7,7 @@ use satkit::sgp4::{SGP4Error, sgp4};
 use satkit::tle::TLE;
 use satkit::{Instant, types::Vec3};
 
-use crate::initial_state_model::Satellite;
+use crate::initial_state_model::{InitialSimulationState, Satellite};
 
 #[allow(dead_code)]
 pub fn get_sample_demo_tle() -> anyhow::Result<TLE> {
@@ -252,39 +252,79 @@ pub fn calculate_sun_irradiance_received_w_per_m2(
     }
 }
 
-pub fn propagate_to_deorbit(
-    simulation_settings: &crate::initial_state_model::SimulationSettings,
-    satellite: &crate::initial_state_model::Satellite,
-    tle: &TLE,
-    ground_stations: &[crate::initial_state_model::GroundStation],
-) -> anyhow::Result<f64> {
-    let epoch = tle.epoch;
+pub struct SimulationStateAtStep {
+    pub time: Instant,
+    pub hours_since_epoch: f64,
+    pub position_itrf: ITRFCoord,
+    pub velocity_itrf: ITRFCoord,
+    pub speed_m_per_s: f64,
+    pub elevation_km: f64,
+    pub elevation_angles_degrees: Vec<f64>,
+    pub drag_power_watts: f64,
+    pub irradiance_approx_w_per_m2: f64,
+    pub irradiance_w_per_m2: f64,
+    pub local_time_hours: f64,
+    pub is_deorbited: bool,
+}
 
-    let mut hours_since_epoch: f64 = 0.0;
+// --- Stateful simulator ---
+#[derive(Debug)]
+pub struct SimulationRun {
+    // Fixed inputs
+    pub initial: InitialSimulationState,
 
-    let mut tle_mut = tle.clone();
+    // Evolving state
+    tle_mut: TLE,
+    current_sim_time: Instant,
+}
 
-    while hours_since_epoch < simulation_settings.max_days * 24.0 {
-        let time = epoch + satkit::Duration::from_hours(hours_since_epoch);
+impl SimulationRun {
+    /// Seed a new run from the initial state bundle.
+    pub fn new(initial: InitialSimulationState) -> Self {
+        let epoch = initial.tle.epoch;
+        Self {
+            tle_mut: initial.tle.clone(),
+            initial,
+            current_sim_time: epoch,
+        }
+    }
 
-        // SGP4 runs on a slice of times
-        let (position_teme, velocity_teme, errs) = sgp4(&mut tle_mut, &[time]);
+    pub fn hours_since_epoch(&self) -> f64 {
+        (self.current_sim_time - self.initial.tle.epoch).as_hours()
+    }
+
+    /// Advance one simulation step.
+    ///
+    /// Returns per-step telemetry. `telemetry.deorbited == true` when elevation < 100 km.
+    pub fn step(&mut self) -> anyhow::Result<SimulationStateAtStep> {
+        let settings = &self.initial.simulation_settings;
+        let gs = &self.initial.ground_stations;
+        let sat = &self.initial.satellite;
+
+        let time = self.current_sim_time;
+
+        // SGP4 over a single timestamp (slice)
+        let (position_teme, velocity_teme, errs) = sgp4(&mut self.tle_mut, &[time]);
         if let Some(err) = errs.first() {
             if *err != SGP4Error::SGP4Success {
                 return Err(anyhow::anyhow!("SGP4 error: {}", err));
             }
         }
-        // Fetch a transform matrix, maxing out when it's too far into the future.
-        let transform_matrix = if time < satkit::Instant::new(1767250888000 * 1000) {
-            qteme2itrf(&time).to_rotation_matrix()
+
+        // Transform TEME -> ITRF (cap matrix far in the future like your original)
+        let max_tf_time = Instant::new(1767250888000 * 1000);
+        let tf_time = if time < max_tf_time {
+            time
         } else {
-            qteme2itrf(&satkit::Instant::new(1767250888000 * 1000)).to_rotation_matrix()
+            max_tf_time
         };
+        let transform_matrix = qteme2itrf(&tf_time).to_rotation_matrix();
         let position_itrf_matrix = transform_matrix * position_teme;
         let velocity_itrf_matrix = transform_matrix * velocity_teme;
 
         let position_itrf = ITRFCoord::from_slice(position_itrf_matrix.as_slice()).unwrap();
-        let velocity_itrf = ITRFCoord::from_slice(velocity_itrf_matrix.as_slice()).unwrap(); // TODO: Probably just get the array out of the Matrix
+        let velocity_itrf = ITRFCoord::from_slice(velocity_itrf_matrix.as_slice()).unwrap();
+
         let speed_m_per_s = pythag_3(&[
             velocity_itrf.itrf[0],
             velocity_itrf.itrf[1],
@@ -299,28 +339,29 @@ pub fn propagate_to_deorbit(
 
         let elevation_km = calculate_elevation_from_location_km(&position_km);
 
-        let elevation_angles_degrees = ground_stations
+        let elevation_angles_degrees = gs
             .iter()
             .map(|station| calculate_elevation_angle_degrees(&position_km, station))
             .collect::<Vec<_>>();
 
         let drag_power_watts = calculate_power_from_atmospheric_drag_watts(
-            satellite,
+            sat,
             elevation_km,
             Some(position_itrf.latitude_deg()),
             Some(position_itrf.longitude_deg()),
             speed_m_per_s,
             Some(time),
-            simulation_settings.drag_power_enable_space_weather,
+            settings.drag_power_enable_space_weather,
         );
 
         let local_time_hours: f64 =
             calculate_local_solar_time_hours(position_itrf.longitude_deg(), &time);
 
+        // (Keep your prints for now; you can remove or gate them with a flag later.)
         println!(
             "Time: TLE Epoch + {:.2} days = {:.2} years => UTC {} => Local Time: {:.2}h = {}:{:02}",
-            hours_since_epoch / 24.0,
-            hours_since_epoch / (24.0 * 365.0),
+            self.hours_since_epoch() / 24.0,
+            self.hours_since_epoch() / (24.0 * 365.0),
             time,
             local_time_hours,
             local_time_hours.floor() as u32,
@@ -350,6 +391,7 @@ pub fn propagate_to_deorbit(
             elevation_km,
             speed_m_per_s / 1000.0
         );
+
         let irradiance_approx_w_per_m2 = calculate_sun_irradiance_received_approx_w_per_m2(
             &[
                 position_itrf.itrf[0],
@@ -375,7 +417,7 @@ pub fn propagate_to_deorbit(
             irradiance_w_per_m2
         );
 
-        for (station, angle_deg) in ground_stations.iter().zip(elevation_angles_degrees) {
+        for (station, angle_deg) in gs.iter().zip(elevation_angles_degrees.iter().copied()) {
             println!(
                 "Ground station \"{}\" -> {} Elevation: {:.2} degrees (Distance: {:.2} km)",
                 station.name,
@@ -394,52 +436,56 @@ pub fn propagate_to_deorbit(
         }
         println!();
 
-        if elevation_km < 100.0 {
+        let is_deorbited = elevation_km < 100.0;
+        if is_deorbited {
             println!(
                 "Deorbit achieved at {:.2} days = {:.2} years since epoch = {}",
-                hours_since_epoch / 24.0,
-                hours_since_epoch / (24.0 * 365.0),
+                self.hours_since_epoch() / 24.0,
+                self.hours_since_epoch() / (24.0 * 365.0),
                 time
             );
-            return Ok(hours_since_epoch);
         }
 
-        hours_since_epoch += simulation_settings.step_interval_hours;
+        // Advance the clock for the *next* call to step().
+        self.current_sim_time += satkit::Duration::from_hours(settings.step_interval_hours);
+
+        Ok(SimulationStateAtStep {
+            time,
+            hours_since_epoch: self.hours_since_epoch(), // now points to the *next* tick
+            position_itrf,
+            velocity_itrf,
+            speed_m_per_s,
+            elevation_km,
+            elevation_angles_degrees,
+            drag_power_watts,
+            irradiance_approx_w_per_m2,
+            irradiance_w_per_m2,
+            local_time_hours,
+            is_deorbited,
+        })
     }
 
-    Err(anyhow::anyhow!(
-        "Failed to deorbit within expected time frame."
-    ))
-}
+    /// Drop-in replacement for your original behavior. Returns hours since epoch when deorbit occurs.
+    pub fn run_to_deorbit(&mut self) -> anyhow::Result<f64> {
+        let max_hours = self.initial.simulation_settings.max_days * 24.0;
+        // Because `step()` increments the clock at the end, we keep a local tracker.
+        // Start from the simulator’s current time.
 
-pub fn demo_deorbit() -> anyhow::Result<()> {
-    // let tle = get_sample_demo_tle()?;
-    // let satellite = crate::initial_state_model::Satellite {
-    //     name: "Demo Satellite".to_owned(),
-    //     drag_coefficient: 2.5,
-    //     drag_area_m2: (10.0e-2 * 10.0e-2), // 10 cm x 10 cm cross-sectional area
-    // };
-    let (tle, satellite) = get_sample_demo_tle_ideasat_at_start()?;
+        while self.hours_since_epoch() < max_hours {
+            let telemetry = self.step()?;
+            if telemetry.is_deorbited {
+                // The deorbit happened at the *previous* step’s time (which is
+                // telemetry.time). Convert to hours since epoch using our stored counter.
+                // The hours_since_epoch in telemetry points to the *next* tick already,
+                // so subtract the step interval to report the exact tick that deorbited.
+                let step_h = self.initial.simulation_settings.step_interval_hours;
+                let deorbit_h = (telemetry.hours_since_epoch - step_h).max(0.0);
+                return Ok(deorbit_h);
+            }
+        }
 
-    let simulation_settings = crate::initial_state_model::SimulationSettings {
-        max_days: 365.0 * 100.0,
-        step_interval_hours: 1.0 / 60.0,
-        drag_power_enable_space_weather: true,
-    };
-    let ground_stations = [crate::initial_state_model::GroundStation::new(
-        "Rothney Astro Observatory".to_owned(),
-        50.8684,
-        -114.2910,
-        Some(1269.0),
-        2.5,
-        5.0,
-    )];
-
-    println!("Starting simulation for \"{}\":", satellite.name);
-    println!("Using TLE:");
-    println!("{:?}", tle);
-    println!();
-
-    propagate_to_deorbit(&simulation_settings, &satellite, &tle, &ground_stations)?;
-    Ok(())
+        Err(anyhow::anyhow!(
+            "Failed to deorbit within expected time frame."
+        ))
+    }
 }
