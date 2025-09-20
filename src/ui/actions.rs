@@ -13,6 +13,7 @@ use iced::{
     widget::{self},
 };
 use satkit::TLE;
+use std::sync::{Arc, Mutex};
 
 // -------------------------------------
 // App messages
@@ -33,6 +34,15 @@ pub enum Message {
     SatelliteChanged(SatelliteField, String),
     SimulationChanged(SimulationField, String),
     SimulationBoolToggled(SimulationBoolField, bool),
+
+    // NEW: async stepping results
+    RunTicked { result: Result<StepOutcome, String> },
+}
+
+#[derive(Debug, Clone)]
+pub struct StepOutcome {
+    pub done: bool,          // stop condition reached?
+    pub status_line: String, // what to put into run_status
 }
 
 // -------------------------------------
@@ -56,7 +66,11 @@ pub struct MyApp {
     /// Status message to display the result of the last run.
     pub run_status: String,
 
-    pub simulation_run: Option<SimulationRun>,
+    // Use an Arc<Mutex<...>> so we can share it with the async task.
+    // None = no simulation running.
+    pub simulation_run: Option<Arc<Mutex<SimulationRun>>>,
+
+    pub is_running: bool,
 }
 
 impl MyApp {
@@ -111,7 +125,34 @@ impl MyApp {
             }
 
             Message::ButtonPressedRun => {
-                self.on_button_pressed_run();
+                return self.on_button_pressed_run();
+            }
+
+            Message::RunTicked { result } => {
+                match result {
+                    Ok(outcome) => {
+                        self.run_status = outcome.status_line;
+
+                        if outcome.done {
+                            // Stop permanently
+                            self.is_running = false;
+                            self.simulation_run = None;
+                        } else if self.is_running {
+                            // Keep going: schedule the next tick immediately
+                            if let Some(run) = &self.simulation_run {
+                                let run = run.clone();
+                                return Task::perform(step_simulation_once(run), |result| {
+                                    Message::RunTicked { result }
+                                });
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        self.run_status = format!("Error during simulation step: {err}");
+                        self.is_running = false;
+                        self.simulation_run = None;
+                    }
+                }
             }
         }
         Task::none()
@@ -180,53 +221,26 @@ impl MyApp {
 }
 
 impl MyApp {
-    fn on_button_pressed_run(&mut self) {
-        match self.init_simulation_run() {
-            Ok(simulation_run) => {
-                self.run_status = "Starting simulation...".to_string();
-                self.simulation_run = Some(simulation_run);
-            }
+    fn on_button_pressed_run(&mut self) -> Task<Message> {
+        // Initialize.
+        let run = match self.init_simulation_run() {
+            Ok(run) => run,
             Err(err) => {
                 self.run_status = format!("Error initializing simulation: {err}");
-                return;
-            }
-        }
-
-        let simulation_run = match &mut self.simulation_run {
-            Some(run) => run,
-            None => {
-                self.run_status = "No simulation to run.".to_string();
-                return;
+                return Task::none();
             }
         };
-        let max_hours = simulation_run.initial.simulation_settings.max_days * 24.0;
 
-        while simulation_run.hours_since_epoch() < max_hours {
-            let telemetry = match simulation_run.step() {
-                Ok(t) => t,
-                Err(err) => {
-                    self.run_status = format!("Error during simulation step: {err}");
-                    return;
-                }
-            };
+        // Wrap for background stepping.
+        let run = Arc::new(Mutex::new(run));
+        self.simulation_run = Some(run.clone());
+        self.is_running = true;
+        self.run_status = "Starting simulation...".to_string();
 
-            if telemetry.is_deorbited {
-                // The deorbit happened at the *previous* step’s time (which is
-                // telemetry.time). Convert to hours since epoch using our stored counter.
-                // The hours_since_epoch in telemetry points to the *next* tick already,
-                // so subtract the step interval to report the exact tick that deorbited.
-                let step_h = simulation_run
-                    .initial
-                    .simulation_settings
-                    .step_interval_hours;
-                let deorbit_h = (telemetry.hours_since_epoch - step_h).max(0.0);
-                self.run_status = format!(
-                    "Satellite deorbited at {:.2} hours ({:.2} days).",
-                    deorbit_h,
-                    deorbit_h / 24.0
-                );
-            }
-        }
+        // Kick off the first tick..
+        Task::perform(step_simulation_once(run), |result| Message::RunTicked {
+            result,
+        })
     }
 
     fn init_simulation_run(&mut self) -> Result<SimulationRun, String> {
@@ -250,6 +264,57 @@ impl MyApp {
 
         Ok(SimulationRun::new(initial_simulation_state))
     }
+}
+
+async fn step_simulation_once(run: Arc<Mutex<SimulationRun>>) -> Result<StepOutcome, String> {
+    tokio::task::spawn_blocking(move || {
+        // Lock the run for this step
+        let mut guard = run.lock().map_err(|_| "Poisoned mutex lock".to_string())?;
+        let sim_run = &mut *guard;
+
+        let max_hours = sim_run.initial.simulation_settings.max_days * 24.0;
+        let step_interval_h = sim_run.initial.simulation_settings.step_interval_hours;
+
+        // Stop if we're already past max time
+        if sim_run.hours_since_epoch() >= max_hours {
+            return Ok(StepOutcome {
+                done: true,
+                status_line: format!(
+                    "Reached max time: {:.2} hours ({:.2} days).",
+                    max_hours,
+                    max_hours / 24.0
+                ),
+            });
+        }
+
+        // Perform one step.
+        let telemetry = sim_run.step().map_err(|e| format!("{e}"))?;
+
+        // If deorbited, compute the previous tick time (like your comment).
+        if telemetry.is_deorbited {
+            let deorbit_h = (telemetry.hours_since_epoch - step_interval_h).max(0.0);
+            return Ok(StepOutcome {
+                done: true,
+                status_line: format!(
+                    "Satellite deorbited at {:.2} hours ({:.2} days).",
+                    deorbit_h,
+                    deorbit_h / 24.0
+                ),
+            });
+        }
+
+        // Otherwise, report progress and keep going.
+        Ok(StepOutcome {
+            done: telemetry.hours_since_epoch >= max_hours,
+            status_line: format!(
+                "Sim running… t = {:.2} h ({:.2} d)",
+                telemetry.hours_since_epoch,
+                telemetry.hours_since_epoch / 24.0
+            ),
+        })
+    })
+    .await
+    .map_err(|_| "Join error stepping simulation".to_string())?
 }
 
 pub fn main() -> iced::Result {

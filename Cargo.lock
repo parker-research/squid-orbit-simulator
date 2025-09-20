@@ -3456,6 +3456,7 @@ dependencies = [
  "satkit",
  "strum",
  "strum_macros",
+ "tokio",
 ]
 
 [[package]]

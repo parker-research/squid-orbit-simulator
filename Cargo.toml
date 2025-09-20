@@ -13,3 +13,4 @@ once_cell = "1.21.3"                                            # For memoizatio
 satkit = "0.7.4"                                                # Main satellite simulation.
 strum = "0.27.2"
 strum_macros = "0.27.2"
+tokio = "1.47.1"
