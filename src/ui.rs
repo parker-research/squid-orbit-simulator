@@ -1,9 +1,13 @@
 use std::collections::HashMap;
 
+use iced::Subscription;
+use iced::advanced::subscription;
+use iced::keyboard::{Event as KeyEvent, Key, Modifiers};
 use iced::{
-    Element, Renderer,
+    Element, Event, Renderer, Task, keyboard,
     widget::{button, checkbox, column, horizontal_rule, row, scrollable, text, text_input},
 };
+use once_cell::unsync::OnceCell;
 use satkit::TLE;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -39,6 +43,11 @@ pub struct SimulationSettings {
 // -------------------------------------
 #[derive(Debug, Clone)]
 pub enum Message {
+    EventOccurred(Event),
+    FocusTo(usize),
+    FocusNext,
+    FocusPrevious,
+
     // Existing
     TleLine0Changed(String),
     TleLine1Changed(String),
@@ -65,7 +74,7 @@ pub enum OrbitalField {
 }
 
 impl OrbitalField {
-    pub fn display_label(&self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self {
             OrbitalField::Inclination => "Inclination (deg)",
             OrbitalField::Raan => "RAAN (deg)",
@@ -152,6 +161,9 @@ impl SimulationBoolField {
 // -------------------------------------
 #[derive(Debug, Default)]
 pub struct MyApp {
+    focus_order_store: OnceCell<Vec<text_input::Id>>,
+    focused_ix: usize,
+
     // Existing
     tle_line0: String,
     tle_line1: String,
@@ -170,7 +182,36 @@ pub struct MyApp {
 }
 
 impl MyApp {
-    pub fn update(&mut self, message: Message) {
+    fn focus_order(&self) -> &Vec<text_input::Id> {
+        self.focus_order_store.get_or_init(|| {
+            let mut ids = Vec::new();
+            // TLE (3)
+            ids.push(text_input::Id::unique());
+            ids.push(text_input::Id::unique());
+            ids.push(text_input::Id::unique());
+            // Orbital fields
+            for _ in OrbitalField::iter() {
+                ids.push(text_input::Id::unique());
+            }
+            // Ground station
+            for _ in GroundStationField::iter() {
+                ids.push(text_input::Id::unique());
+            }
+            // Satellite
+            for _ in SatelliteField::iter() {
+                ids.push(text_input::Id::unique());
+            }
+            // Simulation numeric
+            for _ in SimulationField::iter() {
+                ids.push(text_input::Id::unique());
+            }
+            ids
+        })
+    }
+}
+
+impl MyApp {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             // Existing
             Message::TleLine0Changed(text) => {
@@ -204,9 +245,48 @@ impl MyApp {
             Message::ButtonPressedRun => {
                 self.on_button_pressed_run();
             }
+
+            Message::EventOccurred(Event::Keyboard(key_event)) => {
+                if let KeyEvent::KeyPressed { key, modifiers, .. } = key_event {
+                    let shift = modifiers.contains(Modifiers::SHIFT);
+
+                    if key == Key::Named(keyboard::key::Named::Tab) {
+                        if self.focus_order().is_empty() {
+                            return Task::none();
+                        }
+                        // move index
+                        if shift {
+                            self.focused_ix = (self.focused_ix + self.focus_order().len() - 1)
+                                % self.focus_order().len();
+                        } else {
+                            self.focused_ix = (self.focused_ix + 1) % self.focus_order().len();
+                        }
+                        let id = self.focus_order()[self.focused_ix].clone();
+                        // Focus the target input
+                        return text_input::focus(id);
+                    }
+                }
+            }
+
+            Message::FocusTo(ix) => {
+                if ix < self.focus_order().len() {
+                    self.focused_ix = ix;
+                    return text_input::focus(self.focus_order()[ix].clone());
+                }
+            }
+
+            // default:
+            _ => { /* Ignore other events like mouse/keyboard events. */ }
         }
+        return Task::none();
     }
 
+    // pub fn subscription(&self) -> Subscription<Message> {
+    //     iced::Subscription::events().map(Message::EventOccurred)
+    // }
+}
+
+impl MyApp {
     fn try_parse_tle(&mut self) {
         if let Ok(tle) = TLE::load_2line(&self.tle_line1, &self.tle_line2) {
             self.tle = Some(tle.clone());
@@ -463,25 +543,34 @@ impl MyApp {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        // ------------------------------
-        // TLE inputs (existing)
-        // ------------------------------
+        // Helper to pop the next id as we build rows.
+        let mut next_id = 0usize;
+        let mut take_id = || {
+            let i = next_id;
+            next_id += 1;
+            self.focus_order()[i].clone()
+        };
+
+        // TLE inputs
         let tle_inputs = vec![
             row![
                 text("TLE Line 0 (Name)").width(180),
                 text_input::<Message, iced::Theme, Renderer>("TLE Line 0", &self.tle_line0)
+                    .id(take_id())
                     .on_input(Message::TleLine0Changed),
             ]
             .into(),
             row![
                 text("TLE Line 1").width(180),
                 text_input::<Message, iced::Theme, Renderer>("TLE Line 1", &self.tle_line1)
+                    .id(take_id())
                     .on_input(Message::TleLine1Changed),
             ]
             .into(),
             row![
                 text("TLE Line 2").width(180),
                 text_input::<Message, iced::Theme, Renderer>("TLE Line 2", &self.tle_line2)
+                    .id(take_id())
                     .on_input(Message::TleLine2Changed),
             ]
             .into(),
@@ -490,73 +579,87 @@ impl MyApp {
         // ------------------------------
         // Orbital param inputs
         // ------------------------------
-        let param_inputs = OrbitalField::iter().map(|field| {
-            let label = field.display_label();
-            let value = self.orbital_params.get(&field).cloned().unwrap_or_default();
-            row![
-                text(label).width(180),
-                text_input::<Message, iced::Theme, Renderer>(label, &value)
-                    .on_input(move |val| Message::OrbitalParamChanged(field.clone(), val))
-            ]
-            .into()
-        });
+        let param_inputs: Vec<Element<'_, Message>> = OrbitalField::iter()
+            .map(|f| {
+                let label = f.label();
+                let value = self.orbital_params.get(&f).cloned().unwrap_or_default();
+                row![
+                    text(label).width(180),
+                    text_input::<Message, iced::Theme, Renderer>(label, &value)
+                        .id(take_id())
+                        .on_input(move |val| Message::OrbitalParamChanged(f.clone(), val))
+                ]
+                .into()
+            })
+            .collect();
 
         // ------------------------------
         // Ground Station inputs
         // ------------------------------
-        let gs_inputs = GroundStationField::iter().map(|f| {
-            let label = f.label();
-            let value = self
-                .ground_station_inputs
-                .get(&f)
-                .cloned()
-                .unwrap_or_default();
-            row![
-                text(label).width(180),
-                text_input::<Message, iced::Theme, Renderer>(label, &value)
-                    .on_input(move |val| Message::GroundStationChanged(f.clone(), val))
-            ]
-            .into()
-        });
+        let gs_inputs: Vec<Element<'_, Message>> = GroundStationField::iter()
+            .map(|f| {
+                let label = f.label();
+                let value = self
+                    .ground_station_inputs
+                    .get(&f)
+                    .cloned()
+                    .unwrap_or_default();
+                row![
+                    text(label).width(180),
+                    text_input::<Message, iced::Theme, Renderer>(label, &value)
+                        .id(take_id())
+                        .on_input(move |val| Message::GroundStationChanged(f.clone(), val))
+                ]
+                .into()
+            })
+            .collect();
 
         // ------------------------------
         // Satellite inputs
         // ------------------------------
-        let sat_inputs = SatelliteField::iter().map(|f| {
-            let label = f.label();
-            let value = self.satellite_inputs.get(&f).cloned().unwrap_or_default();
-            row![
-                text(label).width(180),
-                text_input::<Message, iced::Theme, Renderer>(label, &value)
-                    .on_input(move |val| Message::SatelliteChanged(f.clone(), val))
-            ]
-            .into()
-        });
+        let sat_inputs: Vec<Element<'_, Message>> = SatelliteField::iter()
+            .map(|f| {
+                let label = f.label();
+                let value = self.satellite_inputs.get(&f).cloned().unwrap_or_default();
+                row![
+                    text(label).width(180),
+                    text_input::<Message, iced::Theme, Renderer>(label, &value)
+                        .id(take_id())
+                        .on_input(move |val| Message::SatelliteChanged(f.clone(), val))
+                ]
+                .into()
+            })
+            .collect();
 
         // ------------------------------
         // Simulation Settings inputs
         // ------------------------------
-        let sim_number_inputs = SimulationField::iter().map(|f| {
-            let label = f.label();
-            let value = self.simulation_inputs.get(&f).cloned().unwrap_or_default();
-            row![
-                text(label).width(180),
-                text_input::<Message, iced::Theme, Renderer>(label, &value)
-                    .on_input(move |val| Message::SimulationChanged(f.clone(), val))
-            ]
-            .into()
-        });
+        let sim_number_inputs: Vec<Element<'_, Message>> = SimulationField::iter()
+            .map(|f| {
+                let label = f.label();
+                let value = self.simulation_inputs.get(&f).cloned().unwrap_or_default();
+                row![
+                    text(label).width(180),
+                    text_input::<Message, iced::Theme, Renderer>(label, &value)
+                        .id(take_id())
+                        .on_input(move |val| Message::SimulationChanged(f.clone(), val))
+                ]
+                .into()
+            })
+            .collect();
 
-        let sim_bool_row = SimulationBoolField::iter().map(|f| {
-            let label = f.label();
-            let value = self.simulation_bools.get(&f).cloned().unwrap_or_default();
-            row![
-                text(label).width(180),
-                checkbox::<Message, iced::Theme, Renderer>(label, value)
-                    .on_toggle(move |val| Message::SimulationBoolToggled(f.clone(), val))
-            ]
-            .into()
-        });
+        let sim_bool_row: Vec<Element<'_, Message>> = SimulationBoolField::iter()
+            .map(|f| {
+                let label = f.label();
+                let value = self.simulation_bools.get(&f).cloned().unwrap_or_default();
+                row![
+                    text(label).width(180),
+                    checkbox::<Message, iced::Theme, Renderer>(label, value)
+                        .on_toggle(move |val| Message::SimulationBoolToggled(f.clone(), val))
+                ]
+                .into()
+            })
+            .collect();
 
         // Bottom bar with Run button + status.
         let run_bar = row![
@@ -574,20 +677,20 @@ impl MyApp {
                 column(tle_inputs).spacing(8),
                 horizontal_rule(1),
                 text("Orbital Parameters").size(22),
-                column(param_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
+                column(param_inputs).spacing(8),
                 horizontal_rule(1),
                 // Ground Station
                 text("Ground Station").size(22),
-                column(gs_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
+                column(gs_inputs).spacing(8),
                 horizontal_rule(1),
                 // Satellite
                 text("Satellite").size(22),
-                column(sat_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
+                column(sat_inputs).spacing(8),
                 horizontal_rule(1),
                 // Simulation Settings
                 text("Simulation Settings").size(22),
-                column(sim_number_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
-                column(sim_bool_row.collect::<Vec<Element<'_, Message>>>()).spacing(8),
+                column(sim_number_inputs).spacing(8),
+                column(sim_bool_row).spacing(8),
                 horizontal_rule(1),
                 // Run
                 run_bar
@@ -596,6 +699,30 @@ impl MyApp {
             .padding(16),
         )
         .into()
+    }
+}
+
+impl MyApp {
+    pub fn subscription(&self) -> Subscription<Message> {
+        subscription::events_with(|event, _status| match event {
+            Event::Keyboard(keyboard_event) => match keyboard_event {
+                keyboard::Event::KeyPressed {
+                    key_code: keyboard::KeyCode::Named(keyboard::key::Named::Tab),
+                    modifiers,
+                    key,
+                    modified_key,
+                    physical_key,
+                    location,
+                    text,
+                } => Some(if modifiers.shift {
+                    Message::FocusPrevious
+                } else {
+                    Message::FocusNext
+                }),
+                _ => None,
+            },
+            _ => None,
+        })
     }
 }
 
