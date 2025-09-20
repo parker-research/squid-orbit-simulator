@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
+use iced::subscription;
 use iced::{
     Element, Renderer,
     widget::{button, checkbox, column, horizontal_rule, row, scrollable, text, text_input},
 };
+use iced::{Subscription, futures::SinkExt};
 use satkit::TLE;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -34,6 +36,17 @@ pub struct SimulationSettings {
     pub drag_power_enable_space_weather: bool,
 }
 
+#[derive(Debug, Clone)]
+/// Output of a single simulation step, which can be plotted/displayed in the UI.
+pub struct SimulationStepUiOutput {
+    pub hours_since_epoch: f64,
+    pub elevation_km: f64,
+    pub speed_km_s: f64,
+    pub drag_power_w: f64,
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+}
+
 // -------------------------------------
 // App messages
 // -------------------------------------
@@ -45,12 +58,17 @@ pub enum Message {
     TleLine2Changed(String),
     OrbitalParamChanged(OrbitalField, String),
     ButtonPressedRun,
+    ButtonPressedCancel,
 
     // ground station / satellite / sim settings inputs
     GroundStationChanged(GroundStationField, String),
     SatelliteChanged(SatelliteField, String),
     SimulationChanged(SimulationField, String),
     SimulationBoolToggled(SimulationBoolField, bool),
+
+    // Messages from worker to UI.
+    NotifySimStepProgress(SimulationStepUiOutput),
+    NotifySimDone(Result<f64, String>),
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter)]
@@ -596,6 +614,35 @@ impl MyApp {
             .padding(16),
         )
         .into()
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        if !self.is_running {
+            // add is_running: bool to state
+            return Subscription::none();
+        }
+
+        // Capture the inputs you need to run with (clone from state)
+        let tle = self.tle.clone();
+        let gs_inputs = self.ground_station_inputs.clone();
+        let sat_inputs = self.satellite_inputs.clone();
+        let sim_inputs = self.simulation_inputs.clone();
+        let sim_bools = self.simulation_bools.clone();
+
+        subscription::channel("sim-runner", 64, move |mut out| async move {
+            // Convert inputs to your domain structs (same parsing you do now).
+            // If parsing fails, send SimDone(Err(...)) and return.
+
+            // Run the simulation loop and periodically send progress:
+            let result =
+                run_sim_streaming(tle, gs_inputs, sat_inputs, sim_inputs, sim_bools, &mut out)
+                    .await;
+
+            // Send final result
+            let _ = out
+                .send(Message::SimDone(result.map_err(|e| e.to_string())))
+                .await;
+        })
     }
 }
 

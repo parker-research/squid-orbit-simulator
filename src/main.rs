@@ -2,6 +2,7 @@ mod initial_state_model;
 mod satellite_state;
 
 mod ui;
+mod ui_sim;
 
 fn main() {
     if let Err(e) = satkit::utils::update_datafiles(None, false) {
