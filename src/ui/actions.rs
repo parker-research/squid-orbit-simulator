@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     initial_state_model::InitialSimulationState,
-    satellite_state::SimulationRun,
+    satellite_state::{SimulationRun, SimulationStateAtStep},
     ui::fields::{
         GroundStationField, OrbitalField, SatelliteField, SimulationBoolField, SimulationField,
     },
@@ -39,10 +39,12 @@ pub enum Message {
     RunTicked { result: Result<StepOutcome, String> },
 }
 
+/// Only data passed back from the async task.
 #[derive(Debug, Clone)]
 pub struct StepOutcome {
     pub done: bool,          // stop condition reached?
     pub status_line: String, // what to put into run_status
+    pub latest_telemetry: Option<SimulationStateAtStep>,
 }
 
 // -------------------------------------
@@ -69,6 +71,8 @@ pub struct MyApp {
     // Use an Arc<Mutex<...>> so we can share it with the async task.
     // None = no simulation running.
     pub simulation_run: Option<Arc<Mutex<SimulationRun>>>,
+
+    pub latest_telemetry: Option<SimulationStateAtStep>,
 
     pub is_running: bool,
 }
@@ -132,6 +136,7 @@ impl MyApp {
                 match result {
                     Ok(outcome) => {
                         self.run_status = outcome.status_line;
+                        self.latest_telemetry = outcome.latest_telemetry;
 
                         if outcome.done {
                             // Stop permanently
@@ -284,6 +289,7 @@ async fn step_simulation_once(run: Arc<Mutex<SimulationRun>>) -> Result<StepOutc
                     max_hours,
                     max_hours / 24.0
                 ),
+                latest_telemetry: sim_run.latest_telemetry.clone(),
             });
         }
 
@@ -300,6 +306,7 @@ async fn step_simulation_once(run: Arc<Mutex<SimulationRun>>) -> Result<StepOutc
                     deorbit_h,
                     deorbit_h / 24.0
                 ),
+                latest_telemetry: sim_run.latest_telemetry.clone(),
             });
         }
 
@@ -307,10 +314,10 @@ async fn step_simulation_once(run: Arc<Mutex<SimulationRun>>) -> Result<StepOutc
         Ok(StepOutcome {
             done: telemetry.hours_since_epoch >= max_hours,
             status_line: format!(
-                "Sim running… t = {:.2} h ({:.2} d)",
-                telemetry.hours_since_epoch,
+                "Sim running... t = {:.2} days",
                 telemetry.hours_since_epoch / 24.0
             ),
+            latest_telemetry: sim_run.latest_telemetry.clone(),
         })
     })
     .await

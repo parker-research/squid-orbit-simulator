@@ -252,6 +252,7 @@ pub fn calculate_sun_irradiance_received_w_per_m2(
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SimulationStateAtStep {
     pub time: Instant,
     pub hours_since_epoch: f64,
@@ -276,6 +277,8 @@ pub struct SimulationRun {
     // Evolving state
     tle_mut: TLE,
     current_sim_time: Instant,
+
+    pub latest_telemetry: Option<SimulationStateAtStep>,
 }
 
 impl SimulationRun {
@@ -286,6 +289,7 @@ impl SimulationRun {
             tle_mut: initial.tle.clone(),
             initial,
             current_sim_time: epoch,
+            latest_telemetry: None,
         }
     }
 
