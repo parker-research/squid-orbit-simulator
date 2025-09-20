@@ -117,6 +117,100 @@ impl MyApp {
         ]
         .spacing(12);
 
+        // ------------------------------
+        // Latest Telemetry panel
+        // ------------------------------
+        let telemetry_section: Element<'_, Message> = {
+            if let Some(t) = &self.latest_telemetry {
+                // Show up to 5 angles, indicate if truncated
+                let angles_preview = if t.elevation_angles_degrees.is_empty() {
+                    "[]".to_string()
+                } else {
+                    let shown = t
+                        .elevation_angles_degrees
+                        .iter()
+                        .take(5)
+                        .map(|v| format!("{:.2}", v))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if t.elevation_angles_degrees.len() > 5 {
+                        format!(
+                            "[{}, …] ({} total)",
+                            shown,
+                            t.elevation_angles_degrees.len()
+                        )
+                    } else {
+                        format!("[{}]", shown)
+                    }
+                };
+
+                column![
+                    text("Latest Telemetry").size(22),
+                    row![
+                        text("Data Point Timestamp").width(180),
+                        text(t.time.as_iso8601())
+                    ],
+                    row![
+                        text("Time since epoch").width(180),
+                        text(format!(
+                            "{:.3} hours = {:.3} days",
+                            t.hours_since_epoch,
+                            t.hours_since_epoch / 24.0
+                        ))
+                    ],
+                    row![
+                        text("ITRF position").width(180),
+                        text(format!("{:?}", t.position_itrf))
+                    ],
+                    row![
+                        text("ITRF velocity").width(180),
+                        text(format!("{:?}", t.velocity_itrf))
+                    ],
+                    row![
+                        text("Speed (m/s)").width(180),
+                        text(format!("{:.3}", t.speed_m_per_s))
+                    ],
+                    row![
+                        text("Elevation (km)").width(180),
+                        text(format!("{:.3}", t.elevation_km))
+                    ],
+                    row![
+                        text("Elevation angles (deg)").width(180),
+                        text(angles_preview)
+                    ],
+                    row![
+                        text("Drag power (W)").width(180),
+                        text(format!("{:.3}", t.drag_power_watts))
+                    ],
+                    row![
+                        text("Irradiance approx (W/m²)").width(180),
+                        text(format!("{:.1}", t.irradiance_approx_w_per_m2))
+                    ],
+                    row![
+                        text("Irradiance (W/m²)").width(180),
+                        text(format!("{:.1}", t.irradiance_w_per_m2))
+                    ],
+                    row![
+                        text("Local time (h)").width(180),
+                        text(format!("{:.3}", t.local_time_hours))
+                    ],
+                    row![
+                        text("Deorbited?").width(180),
+                        text(if t.is_deorbited { "yes" } else { "no" })
+                    ],
+                ]
+                .spacing(8)
+                .into()
+            } else {
+                column![
+                    text("Latest Telemetry").size(22),
+                    text("No telemetry yet. Press Run to start.")
+                ]
+                .spacing(8)
+                .into()
+            }
+        };
+
         // Layout.
         scrollable(
             column![
@@ -141,7 +235,9 @@ impl MyApp {
                 column(sim_bool_row.collect::<Vec<Element<'_, Message>>>()).spacing(8),
                 horizontal_rule(1),
                 // Run
-                run_bar
+                run_bar,
+                horizontal_rule(1),
+                telemetry_section,
             ]
             .spacing(16)
             .padding(16),

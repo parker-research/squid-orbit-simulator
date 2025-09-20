@@ -453,7 +453,7 @@ impl SimulationRun {
         // Advance the clock for the *next* call to step().
         self.current_sim_time += satkit::Duration::from_hours(settings.step_interval_hours);
 
-        Ok(SimulationStateAtStep {
+        let simulation_state = SimulationStateAtStep {
             time,
             hours_since_epoch: self.hours_since_epoch(), // now points to the *next* tick
             position_itrf,
@@ -466,30 +466,8 @@ impl SimulationRun {
             irradiance_w_per_m2,
             local_time_hours,
             is_deorbited,
-        })
-    }
-
-    /// Drop-in replacement for your original behavior. Returns hours since epoch when deorbit occurs.
-    pub fn run_to_deorbit(&mut self) -> anyhow::Result<f64> {
-        let max_hours = self.initial.simulation_settings.max_days * 24.0;
-        // Because `step()` increments the clock at the end, we keep a local tracker.
-        // Start from the simulator’s current time.
-
-        while self.hours_since_epoch() < max_hours {
-            let telemetry = self.step()?;
-            if telemetry.is_deorbited {
-                // The deorbit happened at the *previous* step’s time (which is
-                // telemetry.time). Convert to hours since epoch using our stored counter.
-                // The hours_since_epoch in telemetry points to the *next* tick already,
-                // so subtract the step interval to report the exact tick that deorbited.
-                let step_h = self.initial.simulation_settings.step_interval_hours;
-                let deorbit_h = (telemetry.hours_since_epoch - step_h).max(0.0);
-                return Ok(deorbit_h);
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Failed to deorbit within expected time frame."
-        ))
+        };
+        self.latest_telemetry = Some(simulation_state.clone());
+        Ok(simulation_state)
     }
 }
