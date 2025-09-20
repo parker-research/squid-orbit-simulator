@@ -411,35 +411,3 @@ pub fn propagate_to_deorbit(
         "Failed to deorbit within expected time frame."
     ))
 }
-
-pub fn demo_deorbit() -> anyhow::Result<()> {
-    // let tle = get_sample_demo_tle()?;
-    // let satellite = crate::initial_state_model::Satellite {
-    //     name: "Demo Satellite".to_owned(),
-    //     drag_coefficient: 2.5,
-    //     drag_area_m2: (10.0e-2 * 10.0e-2), // 10 cm x 10 cm cross-sectional area
-    // };
-    let (tle, satellite) = get_sample_demo_tle_ideasat_at_start()?;
-
-    let simulation_settings = crate::initial_state_model::SimulationSettings {
-        max_days: 365.0 * 100.0,
-        step_interval_hours: 1.0 / 60.0,
-        drag_power_enable_space_weather: true,
-    };
-    let ground_stations = [crate::initial_state_model::GroundStation::new(
-        "Rothney Astro Observatory".to_owned(),
-        50.8684,
-        -114.2910,
-        Some(1269.0),
-        2.5,
-        5.0,
-    )];
-
-    println!("Starting simulation for \"{}\":", satellite.name);
-    println!("Using TLE:");
-    println!("{:?}", tle);
-    println!();
-
-    propagate_to_deorbit(&simulation_settings, &satellite, &tle, &ground_stations)?;
-    Ok(())
-}

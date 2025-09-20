@@ -1,5 +1,6 @@
 use once_cell::unsync::OnceCell;
 
+#[derive(Clone)]
 pub struct GroundStation {
     pub name: String,
     pub latitude_deg: f64,

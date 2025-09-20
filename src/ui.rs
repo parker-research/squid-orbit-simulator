@@ -10,32 +10,6 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 // -------------------------------------
-// Your domain structs
-// -------------------------------------
-pub struct GroundStation {
-    pub name: String,
-    pub latitude_deg: f64,
-    pub longitude_deg: f64,
-    pub elevation_m: Option<f64>,
-    pub altitude_m: f64,
-    pub min_elevation_deg: f64,
-}
-
-pub struct Satellite {
-    pub name: String,
-    /// Unitless drag coefficient of the satellite (C_d) for atmospheric drag calculations.
-    pub drag_coefficient: f64,
-    /// Average cross-sectional area of the satellite (A) for atmospheric drag calculations.
-    pub drag_area_m2: f64,
-}
-
-pub struct SimulationSettings {
-    pub max_days: f64,
-    pub step_interval_hours: f64,
-    pub drag_power_enable_space_weather: bool,
-}
-
-// -------------------------------------
 // App messages
 // -------------------------------------
 #[derive(Debug, Clone)]
@@ -290,173 +264,136 @@ impl MyApp {
             }
         }
     }
+}
 
-    // Helpers to parse numeric fields on-demand
-    fn parse_f64(label: &str, s: &str) -> Result<f64, String> {
-        s.trim()
-            .parse::<f64>()
-            .map_err(|_| format!("Invalid number for '{}'", label))
+impl MyApp {
+    fn read_ground_station(&self) -> Result<crate::initial_state_model::GroundStation, String> {
+        let name = self
+            .ground_station_inputs
+            .get(&GroundStationField::Name)
+            .cloned()
+            .unwrap_or_default();
+
+        let lat = parse_required_f64(
+            GroundStationField::LatitudeDeg.label(),
+            self.ground_station_inputs
+                .get(&GroundStationField::LatitudeDeg)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let lon = parse_required_f64(
+            GroundStationField::LongitudeDeg.label(),
+            self.ground_station_inputs
+                .get(&GroundStationField::LongitudeDeg)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let elev_opt = self
+            .ground_station_inputs
+            .get(&GroundStationField::ElevationM)
+            .map(String::as_str)
+            .and_then(parse_optional_f64);
+
+        let alt = parse_required_f64(
+            GroundStationField::AltitudeM.label(),
+            self.ground_station_inputs
+                .get(&GroundStationField::AltitudeM)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let min_el = parse_required_f64(
+            GroundStationField::MinElevationDeg.label(),
+            self.ground_station_inputs
+                .get(&GroundStationField::MinElevationDeg)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+
+        Ok(crate::initial_state_model::GroundStation::new(
+            name, lat, lon, elev_opt, alt, min_el,
+        ))
     }
 
-    fn parse_f64_opt(s: &str) -> Option<f64> {
-        let t = s.trim();
-        if t.is_empty() {
-            None
-        } else {
-            t.parse::<f64>().ok()
+    fn read_satellite(&self) -> Result<crate::initial_state_model::Satellite, String> {
+        let name = self
+            .satellite_inputs
+            .get(&SatelliteField::Name)
+            .cloned()
+            .unwrap_or_default();
+
+        let cd = parse_required_f64(
+            SatelliteField::DragCoefficient.label(),
+            self.satellite_inputs
+                .get(&SatelliteField::DragCoefficient)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let area = parse_required_f64(
+            SatelliteField::DragAreaM2.label(),
+            self.satellite_inputs
+                .get(&SatelliteField::DragAreaM2)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+
+        Ok(crate::initial_state_model::Satellite {
+            name,
+            drag_coefficient: cd,
+            drag_area_m2: area,
+        })
+    }
+
+    fn read_simulation_settings(
+        &self,
+    ) -> Result<crate::initial_state_model::SimulationSettings, String> {
+        let max_days = parse_required_f64(
+            SimulationField::MaxDays.label(),
+            self.simulation_inputs
+                .get(&SimulationField::MaxDays)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let step_hours = parse_required_f64(
+            SimulationField::StepIntervalHours.label(),
+            self.simulation_inputs
+                .get(&SimulationField::StepIntervalHours)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let enable_sw = *self
+            .simulation_bools
+            .get(&SimulationBoolField::DragPowerEnableSpaceWeather)
+            .unwrap_or(&false);
+
+        if max_days <= 0.0 {
+            return Err("Max Days must be > 0".into());
         }
+        if step_hours <= 0.0 {
+            return Err("Step Interval (hours) must be > 0".into());
+        }
+
+        Ok(crate::initial_state_model::SimulationSettings {
+            max_days,
+            step_interval_hours: step_hours,
+            drag_power_enable_space_weather: enable_sw,
+        })
     }
 
     fn on_button_pressed_run(&mut self) {
-        // Parse GroundStation
-        let gs = (|| -> Result<GroundStation, String> {
-            let name = self
-                .ground_station_inputs
-                .get(&GroundStationField::Name)
-                .cloned()
-                .unwrap_or_default();
-
-            let lat = Self::parse_f64(
-                GroundStationField::LatitudeDeg.label(),
-                self.ground_station_inputs
-                    .get(&GroundStationField::LatitudeDeg)
-                    .map(String::as_str)
-                    .unwrap_or(""),
-            )?;
-            let lon = Self::parse_f64(
-                GroundStationField::LongitudeDeg.label(),
-                self.ground_station_inputs
-                    .get(&GroundStationField::LongitudeDeg)
-                    .map(String::as_str)
-                    .unwrap_or(""),
-            )?;
-            let elev_opt = self
-                .ground_station_inputs
-                .get(&GroundStationField::ElevationM)
-                .map(String::as_str)
-                .and_then(Self::parse_f64_opt);
-
-            let alt = Self::parse_f64(
-                GroundStationField::AltitudeM.label(),
-                self.ground_station_inputs
-                    .get(&GroundStationField::AltitudeM)
-                    .map(String::as_str)
-                    .unwrap_or(""),
-            )?;
-            let min_el = Self::parse_f64(
-                GroundStationField::MinElevationDeg.label(),
-                self.ground_station_inputs
-                    .get(&GroundStationField::MinElevationDeg)
-                    .map(String::as_str)
-                    .unwrap_or(""),
-            )?;
-
-            Ok(GroundStation {
-                name,
-                latitude_deg: lat,
-                longitude_deg: lon,
-                elevation_m: elev_opt,
-                altitude_m: alt,
-                min_elevation_deg: min_el,
-            })
-        })();
-
-        // Parse Satellite
-        let sat = (|| -> Result<Satellite, String> {
-            let name = self
-                .satellite_inputs
-                .get(&SatelliteField::Name)
-                .cloned()
-                .unwrap_or_default();
-
-            let cd = Self::parse_f64(
-                SatelliteField::DragCoefficient.label(),
-                self.satellite_inputs
-                    .get(&SatelliteField::DragCoefficient)
-                    .map(String::as_str)
-                    .unwrap_or(""),
-            )?;
-            let area = Self::parse_f64(
-                SatelliteField::DragAreaM2.label(),
-                self.satellite_inputs
-                    .get(&SatelliteField::DragAreaM2)
-                    .map(String::as_str)
-                    .unwrap_or(""),
-            )?;
-
-            Ok(Satellite {
-                name,
-                drag_coefficient: cd,
-                drag_area_m2: area,
-            })
-        })();
-
-        // Parse SimulationSettings
-        let sim = (|| -> Result<SimulationSettings, String> {
-            let max_days = Self::parse_f64(
-                SimulationField::MaxDays.label(),
-                self.simulation_inputs
-                    .get(&SimulationField::MaxDays)
-                    .map(String::as_str)
-                    .unwrap_or(""),
-            )?;
-            let step_hours = Self::parse_f64(
-                SimulationField::StepIntervalHours.label(),
-                self.simulation_inputs
-                    .get(&SimulationField::StepIntervalHours)
-                    .map(String::as_str)
-                    .unwrap_or(""),
-            )?;
-            let enable_sw = *self
-                .simulation_bools
-                .get(&SimulationBoolField::DragPowerEnableSpaceWeather)
-                .unwrap_or(&false);
-
-            if max_days <= 0.0 {
-                return Err("Max Days must be > 0".into());
-            }
-            if step_hours <= 0.0 {
-                return Err("Step Interval (hours) must be > 0".into());
-            }
-
-            Ok(SimulationSettings {
-                max_days,
-                step_interval_hours: step_hours,
-                drag_power_enable_space_weather: enable_sw,
-            })
-        })();
+        let gs_dom = self.read_ground_station();
+        let sat_dom = self.read_satellite();
+        let sim_dom = self.read_simulation_settings();
 
         // Build status (or show first error encountered)
-        match (gs, sat, sim, &self.tle) {
+        match (gs_dom, sat_dom, sim_dom, &self.tle) {
             (Err(e), _, _, _) => self.run_status = e,
             (_, Err(e), _, _) => self.run_status = e,
             (_, _, Err(e), _) => self.run_status = e,
             (_, _, _, None) => {
                 self.run_status = "Nothing to run - please enter a valid TLE.".to_string();
             }
-            (Ok(gs), Ok(sat), Ok(sim), Some(tle)) => {
-                // Convert UI structs to your domain types and run the real simulator.
-                let gs_dom = crate::initial_state_model::GroundStation::new(
-                    gs.name.clone(),
-                    gs.latitude_deg,
-                    gs.longitude_deg,
-                    gs.elevation_m,
-                    gs.altitude_m,
-                    gs.min_elevation_deg,
-                );
-
-                let sat_dom = crate::initial_state_model::Satellite {
-                    name: sat.name.clone(),
-                    drag_coefficient: sat.drag_coefficient,
-                    drag_area_m2: sat.drag_area_m2,
-                };
-
-                let sim_dom = crate::initial_state_model::SimulationSettings {
-                    max_days: sim.max_days,
-                    step_interval_hours: sim.step_interval_hours,
-                    drag_power_enable_space_weather: sim.drag_power_enable_space_weather,
-                };
-
+            (Ok(gs_dom), Ok(sat_dom), Ok(sim_dom), Some(tle)) => {
+                let ground_station_name: String = gs_dom.name.clone();
                 let ground_stations = [gs_dom];
 
                 match crate::satellite_state::propagate_to_deorbit(
@@ -470,11 +407,11 @@ impl MyApp {
                             "Simulation complete: deorbit in {:.3} days.\n\
                          GS: {} | SAT: {} | step={:.4} h | max_days={:.1} | space_weather={}",
                             days_to_deorbit,
-                            gs.name,
-                            sat.name,
-                            sim.step_interval_hours,
-                            sim.max_days,
-                            sim.drag_power_enable_space_weather
+                            ground_station_name,
+                            sat_dom.name,
+                            sim_dom.step_interval_hours,
+                            sim_dom.max_days,
+                            sim_dom.drag_power_enable_space_weather
                         );
                     }
                     Err(err) => {
@@ -626,4 +563,23 @@ pub fn main() -> iced::Result {
     iced::application("Squid Orbit Simulator", MyApp::update, MyApp::view)
         .subscription(MyApp::subscription)
         .run()
+}
+
+fn parse_required_f64(label: &str, s: &str) -> Result<f64, String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err(format!("'{}' is required", label));
+    }
+    trimmed
+        .parse::<f64>()
+        .map_err(|_| format!("Invalid number for '{}'", label))
+}
+
+fn parse_optional_f64(s: &str) -> Option<f64> {
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        t.parse::<f64>().ok()
+    }
 }
