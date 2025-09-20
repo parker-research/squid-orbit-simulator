@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
-use crate::ui::fields::{
-    GroundStationField, OrbitalField, SatelliteField, SimulationBoolField, SimulationField,
+use crate::{
+    initial_state_model::InitialSimulationState,
+    satellite_state::SimulationRun,
+    ui::fields::{
+        GroundStationField, OrbitalField, SatelliteField, SimulationBoolField, SimulationField,
+    },
 };
 use iced::{
     Event, Subscription, Task, event,
@@ -51,6 +55,8 @@ pub struct MyApp {
 
     /// Status message to display the result of the last run.
     pub run_status: String,
+
+    pub simulation_run: Option<SimulationRun>,
 }
 
 impl MyApp {
@@ -175,46 +181,74 @@ impl MyApp {
 
 impl MyApp {
     fn on_button_pressed_run(&mut self) {
-        let gs_dom = self.read_ground_station();
-        let sat_dom = self.read_satellite();
-        let sim_dom = self.read_simulation_settings();
-
-        // Build status (or show first error encountered)
-        match (gs_dom, sat_dom, sim_dom, &self.tle) {
-            (Err(e), _, _, _) => self.run_status = e,
-            (_, Err(e), _, _) => self.run_status = e,
-            (_, _, Err(e), _) => self.run_status = e,
-            (_, _, _, None) => {
-                self.run_status = "Nothing to run - please enter a valid TLE.".to_string();
+        match self.init_simulation_run() {
+            Ok(simulation_run) => {
+                self.run_status = "Starting simulation...".to_string();
+                self.simulation_run = Some(simulation_run);
             }
-            (Ok(gs_dom), Ok(sat_dom), Ok(sim_dom), Some(tle)) => {
-                let ground_station_name: String = gs_dom.name.clone();
-                let ground_stations = [gs_dom];
-
-                match crate::satellite_state::propagate_to_deorbit(
-                    &sim_dom,
-                    &sat_dom,
-                    tle,
-                    &ground_stations,
-                ) {
-                    Ok(days_to_deorbit) => {
-                        self.run_status = format!(
-                            "Simulation complete: deorbit in {:.3} days.\n\
-                         GS: {} | SAT: {} | step={:.4} h | max_days={:.1} | space_weather={}",
-                            days_to_deorbit,
-                            ground_station_name,
-                            sat_dom.name,
-                            sim_dom.step_interval_hours,
-                            sim_dom.max_days,
-                            sim_dom.drag_power_enable_space_weather
-                        );
-                    }
-                    Err(err) => {
-                        self.run_status = format!("Simulation failed: {err}");
-                    }
-                }
+            Err(err) => {
+                self.run_status = format!("Error initializing simulation: {err}");
+                return;
             }
         }
+
+        let simulation_run = match &mut self.simulation_run {
+            Some(run) => run,
+            None => {
+                self.run_status = "No simulation to run.".to_string();
+                return;
+            }
+        };
+        let max_hours = simulation_run.initial.simulation_settings.max_days * 24.0;
+
+        while simulation_run.hours_since_epoch() < max_hours {
+            let telemetry = match simulation_run.step() {
+                Ok(t) => t,
+                Err(err) => {
+                    self.run_status = format!("Error during simulation step: {err}");
+                    return;
+                }
+            };
+
+            if telemetry.is_deorbited {
+                // The deorbit happened at the *previous* step’s time (which is
+                // telemetry.time). Convert to hours since epoch using our stored counter.
+                // The hours_since_epoch in telemetry points to the *next* tick already,
+                // so subtract the step interval to report the exact tick that deorbited.
+                let step_h = simulation_run
+                    .initial
+                    .simulation_settings
+                    .step_interval_hours;
+                let deorbit_h = (telemetry.hours_since_epoch - step_h).max(0.0);
+                self.run_status = format!(
+                    "Satellite deorbited at {:.2} hours ({:.2} days).",
+                    deorbit_h,
+                    deorbit_h / 24.0
+                );
+            }
+        }
+    }
+
+    fn init_simulation_run(&mut self) -> Result<SimulationRun, String> {
+        let ground_station_dom = self.read_ground_station()?;
+        let satellite_dom = self.read_satellite()?;
+        let simulation_settings_dom = self.read_simulation_settings()?;
+
+        let tle = match &self.tle {
+            Some(t) => t,
+            None => return Err("No valid TLE available.".to_string()),
+        };
+
+        let ground_stations = [ground_station_dom];
+
+        let initial_simulation_state = InitialSimulationState {
+            tle: tle.clone(),
+            ground_stations: ground_stations.to_vec(),
+            satellite: satellite_dom,
+            simulation_settings: simulation_settings_dom,
+        };
+
+        Ok(SimulationRun::new(initial_simulation_state))
     }
 }
 
