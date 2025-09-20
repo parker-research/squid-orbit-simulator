@@ -20,8 +20,15 @@ impl GroundStation {
         elevation_m: Option<f64>,
         altitude_m: f64,
         min_elevation_deg: f64,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        if !(-90.0..=90.0).contains(&latitude_deg) {
+            return Err("Latitude must be between -90 and 90 degrees".to_string());
+        }
+        if !(-180.0..=180.0).contains(&longitude_deg) {
+            return Err("Longitude must be between -180 and 180 degrees".to_string());
+        }
+
+        Ok(Self {
             name,
             latitude_deg,
             longitude_deg,
@@ -29,7 +36,7 @@ impl GroundStation {
             altitude_m,
             min_elevation_deg,
             ecef_cache: OnceCell::new(),
-        }
+        })
     }
 
     pub fn ecef_xyz_m(&self) -> [f64; 3] {

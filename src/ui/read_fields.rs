@@ -63,9 +63,7 @@ impl MyApp {
                 .unwrap_or(""),
         )?;
 
-        Ok(crate::initial_state_model::GroundStation::new(
-            name, lat, lon, elev_opt, alt, min_el,
-        ))
+        crate::initial_state_model::GroundStation::new(name, lat, lon, elev_opt, alt, min_el)
     }
 
     pub fn read_satellite(&self) -> Result<crate::initial_state_model::Satellite, String> {
