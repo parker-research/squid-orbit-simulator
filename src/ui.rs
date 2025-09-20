@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use iced::{
-    Element, Renderer,
-    widget::{button, checkbox, column, horizontal_rule, row, scrollable, text, text_input},
+    Element, Event, Renderer, Subscription, Task, event,
+    keyboard::{self, key},
+    widget::{self, button, checkbox, column, horizontal_rule, row, scrollable, text, text_input},
 };
 use satkit::TLE;
 use strum::IntoEnumIterator;
@@ -39,6 +40,8 @@ pub struct SimulationSettings {
 // -------------------------------------
 #[derive(Debug, Clone)]
 pub enum Message {
+    Event(iced::Event),
+
     // Existing
     TleLine0Changed(String),
     TleLine1Changed(String),
@@ -170,8 +173,27 @@ pub struct MyApp {
 }
 
 impl MyApp {
-    pub fn update(&mut self, message: Message) {
+    fn subscription(&self) -> Subscription<Message> {
+        event::listen().map(Message::Event)
+    }
+
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::Event(event) => match event {
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: keyboard::Key::Named(key::Named::Tab),
+                    modifiers,
+                    ..
+                }) => {
+                    if modifiers.shift() {
+                        return widget::focus_previous();
+                    } else {
+                        return widget::focus_next();
+                    }
+                }
+                _ => {}
+            },
+
             // Existing
             Message::TleLine0Changed(text) => {
                 self.tle_line0 = text;
@@ -205,6 +227,7 @@ impl MyApp {
                 self.on_button_pressed_run();
             }
         }
+        Task::none()
     }
 
     fn try_parse_tle(&mut self) {
@@ -600,5 +623,7 @@ impl MyApp {
 }
 
 pub fn main() -> iced::Result {
-    iced::run("Squid Orbit Simulator", MyApp::update, MyApp::view)
+    iced::application("Squid Orbit Simulator", MyApp::update, MyApp::view)
+        .subscription(MyApp::subscription)
+        .run()
 }
