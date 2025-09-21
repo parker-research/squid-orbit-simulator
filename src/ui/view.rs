@@ -5,8 +5,10 @@ use crate::ui::{
     },
 };
 use iced::{
-    Element, Renderer,
-    widget::{button, checkbox, column, horizontal_rule, row, scrollable, text, text_input},
+    Element, Font, Renderer,
+    widget::{
+        button, checkbox, column, horizontal_rule, row, scrollable, text, text_editor, text_input,
+    },
 };
 use strum::IntoEnumIterator;
 
@@ -130,6 +132,27 @@ impl MyApp {
             .into()
         });
 
+        // ------------------------------
+        // Inputs JSON I/O
+        // ------------------------------
+        let import_export_json_section = column![
+            text("Import/Export Simulation Configuration as JSON").size(22),
+            row![
+                button::<Message, iced::Theme, Renderer>(text("Export Inputs"))
+                    .on_press(Message::ExportInputFieldsRequested),
+                button::<Message, iced::Theme, Renderer>(text("Import Inputs")).on_press(
+                    Message::ImportInputFieldsFromJson(self.inputs_json_editor.text())
+                ),
+            ]
+            .spacing(12),
+            text_editor::<Message, iced::Theme, Renderer>(&self.inputs_json_editor)
+                .placeholder("Paste or edit inputs JSON here…")
+                .on_action(Message::InputsJsonEdited) // Allow typing in the box.
+                .font(Font::MONOSPACE)
+                .height(200)
+        ]
+        .spacing(8);
+
         // Bottom bar with Run button + status.
         let run_bar = row![
             button::<Message, iced::Theme, Renderer>(text("Run"))
@@ -143,7 +166,6 @@ impl MyApp {
         // ------------------------------
         let telemetry_section: Element<'_, Message> = {
             if let Some(t) = &self.latest_telemetry {
-                // Show up to 5 angles, indicate if truncated
                 let angles_preview = if t.elevation_angles_degrees.is_empty() {
                     "[]".to_string()
                 } else {
@@ -254,6 +276,9 @@ impl MyApp {
                 text("Simulation Settings").size(22),
                 column(sim_number_inputs.collect::<Vec<Element<'_, Message>>>()).spacing(8),
                 column(sim_bool_row.collect::<Vec<Element<'_, Message>>>()).spacing(8),
+                horizontal_rule(1),
+                // Inputs JSON I/O
+                import_export_json_section,
                 horizontal_rule(1),
                 // Run
                 run_bar,

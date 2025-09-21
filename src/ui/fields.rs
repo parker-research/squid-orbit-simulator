@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
-#[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter, Serialize, Deserialize)]
 pub enum OrbitalField {
     Inclination,
     Raan,
@@ -30,7 +31,7 @@ impl OrbitalField {
 // -------------------------------------
 // field enums for the forms
 // -------------------------------------
-#[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter, Serialize, Deserialize)]
 pub enum GroundStationField {
     Name,
     LatitudeDeg,
@@ -52,7 +53,7 @@ impl GroundStationField {
     }
 }
 
-#[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter, Serialize, Deserialize)]
 pub enum SatelliteField {
     Name,
     DragCoefficient,
@@ -68,7 +69,7 @@ impl SatelliteField {
     }
 }
 
-#[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter, Serialize, Deserialize)]
 pub enum SimulationField {
     MaxDays,
     StepIntervalHours,
@@ -82,7 +83,7 @@ impl SimulationField {
     }
 }
 
-#[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter, Serialize, Deserialize)]
 pub enum SimulationBoolField {
     DragPowerEnableSpaceWeather,
 }
@@ -96,7 +97,7 @@ impl SimulationBoolField {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MyAppInputFields {
     pub ground_station_inputs: HashMap<GroundStationField, String>,
     pub satellite_inputs: HashMap<SatelliteField, String>,

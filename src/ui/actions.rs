@@ -9,7 +9,7 @@ use crate::{
 use iced::{
     Event, Subscription, Task, event,
     keyboard::{self, key},
-    widget::{self},
+    widget::{self, text_editor},
 };
 use satkit::TLE;
 use std::sync::{Arc, Mutex};
@@ -34,7 +34,12 @@ pub enum Message {
     SimulationChanged(SimulationField, String),
     SimulationBoolToggled(SimulationBoolField, bool),
 
-    // NEW: async stepping results
+    // I/O for input_fields <-> JSON
+    ExportInputFieldsRequested,
+    ImportInputFieldsFromJson(String),
+    InputsJsonEdited(text_editor::Action),
+
+    // Async stepping results.
     RunTicked { result: Result<StepOutcome, String> },
 }
 
@@ -69,6 +74,8 @@ pub struct MyApp {
     pub latest_telemetry: Option<SimulationStateAtStep>,
 
     pub is_running: bool,
+
+    pub inputs_json_editor: text_editor::Content,
 }
 
 const SIMULATION_MAX_UI_UPDATE_PERIOD_MS: usize = 600; // ms
@@ -124,6 +131,30 @@ impl MyApp {
             }
             Message::SimulationBoolToggled(field, value) => {
                 self.input_fields.simulation_bools.insert(field, value);
+            }
+
+            // Import/Export of input fields as JSON.
+            Message::ExportInputFieldsRequested => match self.export_inputs_json() {
+                Ok(json) => {
+                    self.inputs_json_editor = text_editor::Content::with_text(&json);
+                    self.run_status = "Exported inputs to JSON buffer.".into();
+                }
+                Err(e) => {
+                    self.run_status = format!("Failed to export inputs: {e}");
+                }
+            },
+            Message::ImportInputFieldsFromJson(payload) => {
+                match self.import_inputs_json(&payload) {
+                    Ok(()) => {
+                        self.run_status = "Imported inputs from JSON.".into();
+                    }
+                    Err(e) => {
+                        self.run_status = format!("Failed to import inputs: {e}");
+                    }
+                }
+            }
+            Message::InputsJsonEdited(action) => {
+                self.inputs_json_editor.perform(action); // Allow typing in the box.
             }
 
             Message::ButtonPressedRun => {
@@ -358,6 +389,26 @@ async fn step_simulation_batch(run: Arc<Mutex<SimulationRun>>) -> Result<StepOut
     })
     .await
     .map_err(|_| "Join error stepping simulation".to_string())?
+}
+
+impl MyApp {
+    /// Serialize the current `input_fields` to a pretty JSON string.
+    pub fn export_inputs_json(&self) -> Result<String, String> {
+        serde_json::to_string_pretty(&self.input_fields).map_err(|e| e.to_string())
+    }
+
+    /// Replace `input_fields` by deserializing from a JSON string.
+    pub fn import_inputs_json(&mut self, json: &str) -> Result<(), String> {
+        let parsed: MyAppInputFields = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        self.input_fields = parsed;
+
+        // If your UI or simulation expects the TLE/derived fields to refresh,
+        // you can optionally recalc/propagate here. For example:
+        // self.update_tle_from_fields();   // only if your `input_fields` should drive TLE
+        // self.run_status.clear();
+
+        Ok(())
+    }
 }
 
 pub fn main() -> iced::Result {
