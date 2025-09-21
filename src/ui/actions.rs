@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    initial_state_model::InitialSimulationState,
+    initial_state_model::{InitialSimulationState, TleData},
     satellite_state::{SimulationRun, SimulationStateAtStep},
     ui::fields::{
         GroundStationField, OrbitalField, SatelliteField, SimulationBoolField, SimulationField,
@@ -56,7 +56,7 @@ pub struct MyApp {
     pub tle_line0: String,
     pub tle_line1: String,
     pub tle_line2: String,
-    pub tle: Option<TLE>,
+    pub tle_data: Option<TleData>,
     pub orbital_params: HashMap<OrbitalField, String>,
 
     // raw input states (strings for numeric fields, so we can validate lazily)
@@ -166,33 +166,41 @@ impl MyApp {
     }
 
     fn try_parse_tle(&mut self) {
-        if let Ok(tle) = TLE::load_2line(&self.tle_line1, &self.tle_line2) {
-            self.tle = Some(tle.clone());
-            self.orbital_params
-                .insert(OrbitalField::Inclination, format!("{}", tle.inclination));
-            self.orbital_params
-                .insert(OrbitalField::Raan, format!("{}", tle.raan));
-            self.orbital_params
-                .insert(OrbitalField::Eccentricity, format!("{}", tle.eccen));
+        if let Ok(satkit_tle) = TLE::load_2line(&self.tle_line1, &self.tle_line2) {
+            self.tle_data = Some(TleData::from_satkit_tle(&satkit_tle));
             self.orbital_params.insert(
-                OrbitalField::ArgOfPerigee,
-                format!("{}", tle.arg_of_perigee),
+                OrbitalField::Inclination,
+                format!("{}", satkit_tle.inclination),
             );
             self.orbital_params
-                .insert(OrbitalField::MeanAnomaly, format!("{}", tle.mean_anomaly));
+                .insert(OrbitalField::Raan, format!("{}", satkit_tle.raan));
             self.orbital_params
-                .insert(OrbitalField::MeanMotion, format!("{}", tle.mean_motion));
-            self.orbital_params
-                .insert(OrbitalField::Epoch, format!("{}", tle.epoch.as_iso8601()));
+                .insert(OrbitalField::Eccentricity, format!("{}", satkit_tle.eccen));
+            self.orbital_params.insert(
+                OrbitalField::ArgOfPerigee,
+                format!("{}", satkit_tle.arg_of_perigee),
+            );
+            self.orbital_params.insert(
+                OrbitalField::MeanAnomaly,
+                format!("{}", satkit_tle.mean_anomaly),
+            );
+            self.orbital_params.insert(
+                OrbitalField::MeanMotion,
+                format!("{}", satkit_tle.mean_motion),
+            );
+            self.orbital_params.insert(
+                OrbitalField::Epoch,
+                format!("{}", satkit_tle.epoch.as_iso8601()),
+            );
             self.run_status.clear();
         } else {
-            self.tle = None;
+            self.tle_data = None;
             self.run_status = "Invalid TLE.".to_string();
         }
     }
 
     fn update_tle_from_fields(&mut self) {
-        if let Some(tle) = &mut self.tle {
+        if let Some(tle) = &mut self.tle_data {
             if let Some(val) = self.orbital_params.get(&OrbitalField::Inclination) {
                 if let Ok(v) = val.parse() {
                     tle.inclination = v;
@@ -255,7 +263,7 @@ impl MyApp {
         let satellite_dom = self.read_satellite()?;
         let simulation_settings_dom = self.read_simulation_settings()?;
 
-        let tle = match &self.tle {
+        let tle_data = match &self.tle_data {
             Some(t) => t,
             None => return Err("No valid TLE available.".to_string()),
         };
@@ -263,7 +271,7 @@ impl MyApp {
         let ground_stations = [ground_station_dom];
 
         let initial_simulation_state = InitialSimulationState {
-            tle: tle.clone(),
+            tle: tle_data.clone(),
             ground_stations: ground_stations.to_vec(),
             satellite: satellite_dom,
             simulation_settings: simulation_settings_dom,

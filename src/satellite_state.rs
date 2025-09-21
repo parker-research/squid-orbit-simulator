@@ -1,10 +1,10 @@
 use satkit::ITRFCoord;
+use satkit::TLE;
 use satkit::consts::{EARTH_RADIUS, SUN_RADIUS, WGS84_A};
 use satkit::frametransform::qgcrf2itrf;
 use satkit::frametransform::qteme2itrf;
 use satkit::lpephem::sun::pos_gcrf;
 use satkit::sgp4::{SGP4Error, sgp4};
-use satkit::tle::TLE;
 use satkit::{Instant, types::Vec3};
 
 use crate::initial_state_model::{InitialSimulationState, Satellite};
@@ -275,7 +275,7 @@ pub struct SimulationRun {
     pub initial: InitialSimulationState,
 
     // Evolving state
-    tle_mut: TLE,
+    satkit_tle_mut: satkit::TLE,
     current_sim_time: Instant,
 
     pub latest_telemetry: Option<SimulationStateAtStep>,
@@ -286,7 +286,7 @@ impl SimulationRun {
     pub fn new(initial: InitialSimulationState) -> Self {
         let epoch = initial.tle.epoch;
         Self {
-            tle_mut: initial.tle.clone(),
+            satkit_tle_mut: initial.tle.to_satkit_tle(),
             initial,
             current_sim_time: epoch,
             latest_telemetry: None,
@@ -308,7 +308,7 @@ impl SimulationRun {
         let time = self.current_sim_time;
 
         // SGP4 over a single timestamp (slice)
-        let (position_teme, velocity_teme, errs) = sgp4(&mut self.tle_mut, &[time]);
+        let (position_teme, velocity_teme, errs) = sgp4(&mut self.satkit_tle_mut, &[time]);
         if let Some(err) = errs.first() {
             if *err != SGP4Error::SGP4Success {
                 return Err(anyhow::anyhow!("SGP4 error: {}", err));
