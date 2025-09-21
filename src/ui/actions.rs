@@ -77,6 +77,8 @@ pub struct MyApp {
     pub is_running: bool,
 }
 
+const SIMULATION_MAX_UI_UPDATE_PERIOD_MS: usize = 600; // ms
+
 impl MyApp {
     fn subscription(&self) -> Subscription<Message> {
         event::listen().map(Message::Event)
@@ -146,7 +148,7 @@ impl MyApp {
                             // Keep going: schedule the next tick immediately
                             if let Some(run) = &self.simulation_run {
                                 let run = run.clone();
-                                return Task::perform(step_simulation_once(run), |result| {
+                                return Task::perform(step_simulation_batch(run), |result| {
                                     Message::RunTicked { result }
                                 });
                             }
@@ -243,7 +245,7 @@ impl MyApp {
         self.run_status = "Starting simulation...".to_string();
 
         // Kick off the first tick..
-        Task::perform(step_simulation_once(run), |result| Message::RunTicked {
+        Task::perform(step_simulation_batch(run), |result| Message::RunTicked {
             result,
         })
     }
@@ -271,52 +273,60 @@ impl MyApp {
     }
 }
 
-async fn step_simulation_once(run: Arc<Mutex<SimulationRun>>) -> Result<StepOutcome, String> {
+async fn step_simulation_batch(run: Arc<Mutex<SimulationRun>>) -> Result<StepOutcome, String> {
     tokio::task::spawn_blocking(move || {
-        // Lock the run for this step
+        let real_time_start = std::time::Instant::now();
+
         let mut guard = run.lock().map_err(|_| "Poisoned mutex lock".to_string())?;
         let sim_run = &mut *guard;
 
         let max_hours = sim_run.initial.simulation_settings.max_days * 24.0;
         let step_interval_h = sim_run.initial.simulation_settings.step_interval_hours;
 
-        // Stop if we're already past max time
-        if sim_run.hours_since_epoch() >= max_hours {
-            return Ok(StepOutcome {
-                done: true,
-                status_line: format!(
-                    "Reached max time: {:.2} hours ({:.2} days).",
-                    max_hours,
-                    max_hours / 24.0
-                ),
-                latest_telemetry: sim_run.latest_telemetry.clone(),
-            });
+        // Run several simulation steps/ticks until real elapsed duration expires.
+        loop {
+            if sim_run.hours_since_epoch() >= max_hours {
+                return Ok(StepOutcome {
+                    done: true,
+                    status_line: format!(
+                        "Reached max time: {:.2} hours ({:.2} days).",
+                        max_hours,
+                        max_hours / 24.0
+                    ),
+                    latest_telemetry: sim_run.latest_telemetry.clone(),
+                });
+            }
+
+            let telemetry = sim_run.step().map_err(|e| format!("{e}"))?;
+
+            if telemetry.is_deorbited {
+                let deorbit_h = (telemetry.hours_since_epoch - step_interval_h).max(0.0);
+                return Ok(StepOutcome {
+                    done: true,
+                    status_line: format!(
+                        "Satellite deorbited at {:.2} hours ({:.2} days).",
+                        deorbit_h,
+                        deorbit_h / 24.0
+                    ),
+                    latest_telemetry: sim_run.latest_telemetry.clone(),
+                });
+            }
+
+            // Run minimum one iteration. Break if wallclock time exceeded between UI updates.
+            if real_time_start.elapsed().as_millis() >= SIMULATION_MAX_UI_UPDATE_PERIOD_MS as u128 {
+                break;
+            }
         }
 
-        // Perform one step.
-        let telemetry = sim_run.step().map_err(|e| format!("{e}"))?;
-
-        // If deorbited, compute the previous tick time (like your comment).
-        if telemetry.is_deorbited {
-            let deorbit_h = (telemetry.hours_since_epoch - step_interval_h).max(0.0);
-            return Ok(StepOutcome {
-                done: true,
-                status_line: format!(
-                    "Satellite deorbited at {:.2} hours ({:.2} days).",
-                    deorbit_h,
-                    deorbit_h / 24.0
-                ),
-                latest_telemetry: sim_run.latest_telemetry.clone(),
-            });
-        }
-
-        // Otherwise, report progress and keep going.
+        let latest_telemetry = sim_run.latest_telemetry.as_ref();
         Ok(StepOutcome {
-            done: telemetry.hours_since_epoch >= max_hours,
-            status_line: format!(
-                "Sim running... t = {:.2} days",
-                telemetry.hours_since_epoch / 24.0
-            ),
+            done: latest_telemetry
+                .map(|x| x.hours_since_epoch >= max_hours)
+                .unwrap_or(false),
+            status_line: match latest_telemetry {
+                Some(tt) => format!("Sim running... t = {:.2} days", tt.hours_since_epoch / 24.0),
+                None => "Sim running...".to_string(),
+            },
             latest_telemetry: sim_run.latest_telemetry.clone(),
         })
     })
