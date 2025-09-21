@@ -1,5 +1,4 @@
 use satkit::ITRFCoord;
-use satkit::TLE;
 use satkit::consts::{EARTH_RADIUS, SUN_RADIUS, WGS84_A};
 use satkit::frametransform::qgcrf2itrf;
 use satkit::frametransform::qteme2itrf;
@@ -7,52 +6,7 @@ use satkit::lpephem::sun::pos_gcrf;
 use satkit::sgp4::{SGP4Error, sgp4};
 use satkit::{Instant, types::Vec3};
 
-use crate::initial_state_model::{InitialSimulationState, Satellite};
-
-#[allow(dead_code)]
-pub fn get_sample_demo_tle() -> anyhow::Result<TLE> {
-    let tle = TLE::load_3line(
-        "Satellite 1",
-        "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992",
-        "2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008",
-    )?;
-    Ok(tle)
-}
-
-#[allow(dead_code)]
-pub fn get_sample_demo_tle_canx5() -> anyhow::Result<TLE> {
-    let tle = TLE::load_3line(
-        "CANX-5",
-        "1 40056U 14034D   25209.55901054  .00000935  00000+0  13011-3 0  9999",
-        "2 40056  98.3577  67.3174 0012454 336.2296  23.8338 14.80323878587440",
-    )?;
-    Ok(tle)
-}
-
-#[allow(dead_code)]
-pub fn get_sample_demo_tle_intelsat_902() -> anyhow::Result<TLE> {
-    let line0: &str = "0 INTELSAT 902";
-    let line1: &str = "1 26900U 01039A   06106.74503247  .00000045  00000-0  10000-3 0  8290";
-    let line2: &str =
-        "2 26900   0.0164 266.5378 0003319  86.1794 182.2590  1.00273847 16981   9300.";
-    let tle = TLE::load_3line(&line0.to_string(), &line1.to_string(), &line2.to_string())?;
-    Ok(tle)
-}
-
-#[allow(dead_code)]
-pub fn get_sample_demo_tle_ideasat_at_start() -> anyhow::Result<(TLE, Satellite)> {
-    let tle = TLE::load_3line(
-        "IDEASSAT",
-        "1 47458U 21006AX  23069.16237104  .00027656  00000+0  12836-2 0  9998",
-        "2 47458  97.4050 127.9834 0010829  77.8960 282.3488 15.19943129117543",
-    )?;
-    let satellite = Satellite {
-        name: "IDEASAT".to_owned(),
-        drag_coefficient: 2.5,
-        drag_area_m2: (30.0e-2 * 30.0e-2), // 3U CubeSat with deployable solar panels
-    };
-    Ok((tle, satellite))
-}
+use crate::initial_state_model::InitialSimulationState;
 
 pub fn pythag_3(vector: &[f64; 3]) -> f64 {
     f64::sqrt(vector[0].powi(2) + vector[1].powi(2) + vector[2].powi(2))
@@ -256,8 +210,8 @@ pub fn calculate_sun_irradiance_received_w_per_m2(
 pub struct SimulationStateAtStep {
     pub time: Instant,
     pub hours_since_epoch: f64,
-    pub position_itrf: ITRFCoord,
-    pub velocity_itrf: ITRFCoord,
+    pub position_itrf: [f64; 3],
+    pub velocity_itrf: [f64; 3],
     pub speed_m_per_s: f64,
     pub elevation_km: f64,
     pub elevation_angles_degrees: Vec<f64>,
@@ -456,8 +410,16 @@ impl SimulationRun {
         let simulation_state = SimulationStateAtStep {
             time,
             hours_since_epoch: self.hours_since_epoch(), // now points to the *next* tick
-            position_itrf,
-            velocity_itrf,
+            position_itrf: [
+                position_itrf.itrf[0],
+                position_itrf.itrf[1],
+                position_itrf.itrf[2],
+            ],
+            velocity_itrf: [
+                velocity_itrf.itrf[0],
+                velocity_itrf.itrf[1],
+                velocity_itrf.itrf[2],
+            ],
             speed_m_per_s,
             elevation_km,
             elevation_angles_degrees,
