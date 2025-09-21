@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use strum_macros::EnumIter;
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter)]
@@ -92,4 +94,14 @@ impl SimulationBoolField {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MyAppInputFields {
+    pub ground_station_inputs: HashMap<GroundStationField, String>,
+    pub satellite_inputs: HashMap<SatelliteField, String>,
+    pub simulation_inputs: HashMap<SimulationField, String>,
+    pub simulation_bools: HashMap<SimulationBoolField, bool>,
+
+    pub orbital_params: HashMap<OrbitalField, String>,
 }

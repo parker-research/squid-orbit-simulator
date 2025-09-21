@@ -43,7 +43,12 @@ impl MyApp {
         // ------------------------------
         let param_inputs = OrbitalField::iter().map(|field| {
             let label = field.display_label();
-            let value = self.orbital_params.get(&field).cloned().unwrap_or_default();
+            let value = self
+                .input_fields
+                .orbital_params
+                .get(&field)
+                .cloned()
+                .unwrap_or_default();
             row![
                 text(label).width(180),
                 text_input::<Message, iced::Theme, Renderer>(label, &value)
@@ -58,6 +63,7 @@ impl MyApp {
         let gs_inputs = GroundStationField::iter().map(|f| {
             let label = f.label();
             let value = self
+                .input_fields
                 .ground_station_inputs
                 .get(&f)
                 .cloned()
@@ -75,7 +81,12 @@ impl MyApp {
         // ------------------------------
         let sat_inputs = SatelliteField::iter().map(|f| {
             let label = f.label();
-            let value = self.satellite_inputs.get(&f).cloned().unwrap_or_default();
+            let value = self
+                .input_fields
+                .satellite_inputs
+                .get(&f)
+                .cloned()
+                .unwrap_or_default();
             row![
                 text(label).width(180),
                 text_input::<Message, iced::Theme, Renderer>(label, &value)
@@ -89,7 +100,12 @@ impl MyApp {
         // ------------------------------
         let sim_number_inputs = SimulationField::iter().map(|f| {
             let label = f.label();
-            let value = self.simulation_inputs.get(&f).cloned().unwrap_or_default();
+            let value = self
+                .input_fields
+                .simulation_inputs
+                .get(&f)
+                .cloned()
+                .unwrap_or_default();
             row![
                 text(label).width(180),
                 text_input::<Message, iced::Theme, Renderer>(label, &value)
@@ -100,7 +116,12 @@ impl MyApp {
 
         let sim_bool_row = SimulationBoolField::iter().map(|f| {
             let label = f.label();
-            let value = self.simulation_bools.get(&f).cloned().unwrap_or_default();
+            let value = self
+                .input_fields
+                .simulation_bools
+                .get(&f)
+                .cloned()
+                .unwrap_or_default();
             row![
                 text(label).width(180),
                 checkbox::<Message, iced::Theme, Renderer>(label, value)
