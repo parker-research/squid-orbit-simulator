@@ -65,34 +65,15 @@ impl MyApp {
 
     fn try_parse_tle(&mut self) {
         if let Ok(satkit_tle) = TLE::load_2line(&self.tle_line1, &self.tle_line2) {
-            self.tle_data = Some(TleData::from_satkit_tle(&satkit_tle));
-            self.input_fields.tle_parameter_inputs.insert(
-                TleParameterField::Inclination,
-                format!("{}", satkit_tle.inclination),
-            );
-            self.input_fields
-                .tle_parameter_inputs
-                .insert(TleParameterField::Raan, format!("{}", satkit_tle.raan));
-            self.input_fields.tle_parameter_inputs.insert(
-                TleParameterField::Eccentricity,
-                format!("{}", satkit_tle.eccen),
-            );
-            self.input_fields.tle_parameter_inputs.insert(
-                TleParameterField::ArgOfPerigee,
-                format!("{}", satkit_tle.arg_of_perigee),
-            );
-            self.input_fields.tle_parameter_inputs.insert(
-                TleParameterField::MeanAnomaly,
-                format!("{}", satkit_tle.mean_anomaly),
-            );
-            self.input_fields.tle_parameter_inputs.insert(
-                TleParameterField::MeanMotion,
-                format!("{}", satkit_tle.mean_motion),
-            );
-            self.input_fields.tle_parameter_inputs.insert(
-                TleParameterField::Epoch,
-                format!("{}", satkit_tle.epoch.as_iso8601()),
-            );
+            let tle_data = TleData::from_satkit_tle(&satkit_tle);
+
+            for field in TleParameterField::iter() {
+                self.input_fields
+                    .tle_parameter_inputs
+                    .insert(field.clone(), field.format_value(&tle_data));
+            }
+
+            self.tle_data = Some(tle_data);
             self.run_status.clear();
         } else {
             self.tle_data = None;
@@ -102,58 +83,91 @@ impl MyApp {
 
     fn update_tle_from_fields(&mut self) {
         if let Some(tle) = &mut self.tle_data {
-            if let Some(val) = self
-                .input_fields
-                .tle_parameter_inputs
-                .get(&TleParameterField::Inclination)
-            {
-                if let Ok(v) = val.parse() {
-                    tle.inclination = v;
-                }
-            }
-            if let Some(val) = self
-                .input_fields
-                .tle_parameter_inputs
-                .get(&TleParameterField::Raan)
-            {
-                if let Ok(v) = val.parse() {
-                    tle.raan = v;
-                }
-            }
-            if let Some(val) = self
-                .input_fields
-                .tle_parameter_inputs
-                .get(&TleParameterField::Eccentricity)
-            {
-                if let Ok(v) = val.parse() {
-                    tle.eccen = v;
-                }
-            }
-            if let Some(val) = self
-                .input_fields
-                .tle_parameter_inputs
-                .get(&TleParameterField::ArgOfPerigee)
-            {
-                if let Ok(v) = val.parse() {
-                    tle.arg_of_perigee = v;
-                }
-            }
-            if let Some(val) = self
-                .input_fields
-                .tle_parameter_inputs
-                .get(&TleParameterField::MeanAnomaly)
-            {
-                if let Ok(v) = val.parse() {
-                    tle.mean_anomaly = v;
-                }
-            }
-            if let Some(val) = self
-                .input_fields
-                .tle_parameter_inputs
-                .get(&TleParameterField::MeanMotion)
-            {
-                if let Ok(v) = val.parse() {
-                    tle.mean_motion = v;
+            for (field, val) in &self.input_fields.tle_parameter_inputs {
+                match field {
+                    // TleParameterField::Name => tle.name = val.clone(),
+                    TleParameterField::IntlDesig => tle.intl_desig = val.clone(),
+                    TleParameterField::SatNum => {
+                        if let Ok(v) = val.parse() {
+                            tle.sat_num = v;
+                        }
+                    }
+                    TleParameterField::DesigYear => {
+                        if let Ok(v) = val.parse() {
+                            tle.desig_year = v;
+                        }
+                    }
+                    TleParameterField::DesigLaunch => {
+                        if let Ok(v) = val.parse() {
+                            tle.desig_launch = v;
+                        }
+                    }
+                    TleParameterField::DesigPiece => tle.desig_piece = val.clone(),
+                    TleParameterField::Epoch => { // FIXME: Parse iso8601 from string here.
+                        // if let Ok(inst) = satkit::Instant::from_iso8601(val) {
+                        //     tle.epoch = inst;
+                        // }
+                    }
+                    TleParameterField::MeanMotionDot => {
+                        if let Ok(v) = val.parse() {
+                            tle.mean_motion_dot = v;
+                        }
+                    }
+                    TleParameterField::MeanMotionDotDot => {
+                        if let Ok(v) = val.parse() {
+                            tle.mean_motion_dot_dot = v;
+                        }
+                    }
+                    TleParameterField::BStar => {
+                        if let Ok(v) = val.parse() {
+                            tle.bstar = v;
+                        }
+                    }
+                    TleParameterField::EphemType => {
+                        if let Ok(v) = val.parse() {
+                            tle.ephem_type = v;
+                        }
+                    }
+                    TleParameterField::ElementNum => {
+                        if let Ok(v) = val.parse() {
+                            tle.element_num = v;
+                        }
+                    }
+                    TleParameterField::Inclination => {
+                        if let Ok(v) = val.parse() {
+                            tle.inclination = v;
+                        }
+                    }
+                    TleParameterField::Raan => {
+                        if let Ok(v) = val.parse() {
+                            tle.raan = v;
+                        }
+                    }
+                    TleParameterField::Eccentricity => {
+                        if let Ok(v) = val.parse() {
+                            tle.eccen = v;
+                        }
+                    }
+                    TleParameterField::ArgOfPerigee => {
+                        if let Ok(v) = val.parse() {
+                            tle.arg_of_perigee = v;
+                        }
+                    }
+                    TleParameterField::MeanAnomaly => {
+                        if let Ok(v) = val.parse() {
+                            tle.mean_anomaly = v;
+                        }
+                    }
+                    TleParameterField::MeanMotion => {
+                        if let Ok(v) = val.parse() {
+                            tle.mean_motion = v;
+                        }
+                    }
+                    TleParameterField::RevNum => {
+                        if let Ok(v) = val.parse() {
+                            tle.rev_num = v;
+                        }
+                    }
                 }
             }
 
