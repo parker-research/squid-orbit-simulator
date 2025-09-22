@@ -1,3 +1,4 @@
+// ui_egui.rs
 use crate::{
     initial_state_model::{InitialSimulationState, TleData},
     satellite_state::{SimulationRun, SimulationStateAtStep},
@@ -6,44 +7,14 @@ use crate::{
         SimulationField,
     },
 };
-use iced::{
-    Event, Subscription, Task, event,
-    keyboard::{self, key},
-    widget::{self, text_editor},
-};
+use eframe::egui::{self, FontId, RichText};
 use satkit::TLE;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 // -------------------------------------
-// App messages
+// Background worker messages
 // -------------------------------------
-#[derive(Debug, Clone)]
-pub enum Message {
-    Event(iced::Event),
-
-    // Existing
-    TleLine0Changed(String),
-    TleLine1Changed(String),
-    TleLine2Changed(String),
-    OrbitalParamChanged(OrbitalField, String),
-    ButtonPressedRun,
-
-    // ground station / satellite / sim settings inputs
-    GroundStationChanged(GroundStationField, String),
-    SatelliteChanged(SatelliteField, String),
-    SimulationChanged(SimulationField, String),
-    SimulationBoolToggled(SimulationBoolField, bool),
-
-    // I/O for input_fields <-> JSON
-    ExportInputFieldsRequested,
-    ImportInputFieldsFromJson(String),
-    InputsJsonEdited(text_editor::Action),
-
-    // Async stepping results.
-    RunTicked { result: Result<StepOutcome, String> },
-}
-
-/// Only data passed back from the async task.
 #[derive(Debug, Clone)]
 pub struct StepOutcome {
     pub done: bool,          // stop condition reached?
@@ -51,8 +22,11 @@ pub struct StepOutcome {
     pub latest_telemetry: Option<SimulationStateAtStep>,
 }
 
+type StepTx = mpsc::Sender<Result<StepOutcome, String>>;
+type StepRx = mpsc::Receiver<Result<StepOutcome, String>>;
+
 // -------------------------------------
-// State
+// App State (egui)
 // -------------------------------------
 #[derive(Debug, Default)]
 pub struct MyApp {
@@ -67,129 +41,23 @@ pub struct MyApp {
     /// Status message to display the result of the last run.
     pub run_status: String,
 
-    // Use an Arc<Mutex<...>> so we can share it with the async task.
-    // None = no simulation running.
+    // Simulation
     pub simulation_run: Option<Arc<Mutex<SimulationRun>>>,
-
     pub latest_telemetry: Option<SimulationStateAtStep>,
-
     pub is_running: bool,
 
-    pub inputs_json_editor: text_editor::Content,
+    // JSON I/O buffer
+    pub inputs_json_buffer: String,
+
+    // Worker channel
+    worker_rx: Option<StepRx>,
 }
 
 const SIMULATION_MAX_UI_UPDATE_PERIOD_MS: usize = 600; // ms
 
 impl MyApp {
-    fn subscription(&self) -> Subscription<Message> {
-        event::listen().map(Message::Event)
-    }
-
-    pub fn update(&mut self, message: Message) -> Task<Message> {
-        match message {
-            Message::Event(event) => match event {
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                    key: keyboard::Key::Named(key::Named::Tab),
-                    modifiers,
-                    ..
-                }) => {
-                    if modifiers.shift() {
-                        return widget::focus_previous();
-                    } else {
-                        return widget::focus_next();
-                    }
-                }
-                _ => {}
-            },
-
-            // Existing
-            Message::TleLine0Changed(text) => {
-                self.tle_line0 = text;
-            }
-            Message::TleLine1Changed(text) => {
-                self.tle_line1 = text;
-                self.try_parse_tle();
-            }
-            Message::TleLine2Changed(text) => {
-                self.tle_line2 = text;
-                self.try_parse_tle();
-            }
-            Message::OrbitalParamChanged(field, value) => {
-                self.input_fields
-                    .orbital_params
-                    .insert(field.clone(), value.clone());
-                self.update_tle_from_fields();
-            }
-            Message::GroundStationChanged(field, value) => {
-                self.input_fields.ground_station_inputs.insert(field, value);
-            }
-            Message::SatelliteChanged(field, value) => {
-                self.input_fields.satellite_inputs.insert(field, value);
-            }
-            Message::SimulationChanged(field, value) => {
-                self.input_fields.simulation_inputs.insert(field, value);
-            }
-            Message::SimulationBoolToggled(field, value) => {
-                self.input_fields.simulation_bools.insert(field, value);
-            }
-
-            // Import/Export of input fields as JSON.
-            Message::ExportInputFieldsRequested => match self.export_inputs_json() {
-                Ok(json) => {
-                    self.inputs_json_editor = text_editor::Content::with_text(&json);
-                    self.run_status = "Exported inputs to JSON buffer.".into();
-                }
-                Err(e) => {
-                    self.run_status = format!("Failed to export inputs: {e}");
-                }
-            },
-            Message::ImportInputFieldsFromJson(payload) => {
-                match self.import_inputs_json(&payload) {
-                    Ok(()) => {
-                        self.run_status = "Imported inputs from JSON.".into();
-                    }
-                    Err(e) => {
-                        self.run_status = format!("Failed to import inputs: {e}");
-                    }
-                }
-            }
-            Message::InputsJsonEdited(action) => {
-                self.inputs_json_editor.perform(action); // Allow typing in the box.
-            }
-
-            Message::ButtonPressedRun => {
-                return self.on_button_pressed_run();
-            }
-
-            Message::RunTicked { result } => {
-                match result {
-                    Ok(outcome) => {
-                        self.run_status = outcome.status_line;
-                        self.latest_telemetry = outcome.latest_telemetry;
-
-                        if outcome.done {
-                            // Stop permanently
-                            self.is_running = false;
-                            self.simulation_run = None;
-                        } else if self.is_running {
-                            // Keep going: schedule the next tick immediately
-                            if let Some(run) = &self.simulation_run {
-                                let run = run.clone();
-                                return Task::perform(step_simulation_batch(run), |result| {
-                                    Message::RunTicked { result }
-                                });
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        self.run_status = format!("Error during simulation step: {err}");
-                        self.is_running = false;
-                        self.simulation_run = None;
-                    }
-                }
-            }
-        }
-        Task::none()
+    pub fn new() -> Self {
+        Self::default()
     }
 
     fn try_parse_tle(&mut self) {
@@ -282,16 +150,32 @@ impl MyApp {
             }
         }
     }
-}
 
-impl MyApp {
-    fn on_button_pressed_run(&mut self) -> Task<Message> {
+    fn on_export_inputs_json(&mut self) {
+        match self.export_inputs_json() {
+            Ok(json) => {
+                self.inputs_json_buffer = json;
+                self.run_status = "Exported inputs to JSON buffer.".into();
+            }
+            Err(e) => self.run_status = format!("Failed to export inputs: {e}"),
+        }
+    }
+
+    fn on_import_inputs_json(&mut self) {
+        let json = self.inputs_json_buffer.clone();
+        match self.import_inputs_json(&json) {
+            Ok(()) => self.run_status = "Imported inputs from JSON.".into(),
+            Err(e) => self.run_status = format!("Failed to import inputs: {e}"),
+        }
+    }
+
+    fn on_button_pressed_run(&mut self, ctx: &egui::Context) {
         // Initialize.
         let run = match self.init_simulation_run() {
             Ok(run) => run,
             Err(err) => {
                 self.run_status = format!("Error initializing simulation: {err}");
-                return Task::none();
+                return;
             }
         };
 
@@ -301,10 +185,46 @@ impl MyApp {
         self.is_running = true;
         self.run_status = "Starting simulation...".to_string();
 
-        // Kick off the first tick..
-        Task::perform(step_simulation_batch(run), |result| Message::RunTicked {
-            result,
-        })
+        // Create channel and spawn worker that streams StepOutcome results.
+        let (tx, rx): (StepTx, StepRx) = mpsc::channel();
+        self.worker_rx = Some(rx);
+
+        spawn_stepper_loop(run, tx);
+
+        // Make sure UI keeps polling while running.
+        ctx.request_repaint();
+    }
+
+    fn poll_worker(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.worker_rx {
+            for msg in rx.try_iter() {
+                // match msg {
+                //     Ok(outcome) => {
+                //         self.run_status = outcome.status_line;
+                //         self.latest_telemetry = outcome.latest_telemetry;
+
+                //         if outcome.done {
+                //             self.is_running = false;
+                //             self.simulation_run = None;
+                //             self.worker_rx = None;
+                //         }
+                //     }
+                //     Err(err) => {
+                //         self.run_status = format!("Error during simulation step: {err}");
+                //         self.is_running = false;
+                //         self.simulation_run = None;
+                //         self.worker_rx = None;
+                //     }
+                // }
+            }
+
+            // While running, ask egui to repaint periodically.
+            if self.is_running {
+                ctx.request_repaint_after(Duration::from_millis(
+                    SIMULATION_MAX_UI_UPDATE_PERIOD_MS as u64,
+                ));
+            }
+        }
     }
 
     fn init_simulation_run(&mut self) -> Result<SimulationRun, String> {
@@ -328,70 +248,7 @@ impl MyApp {
 
         Ok(SimulationRun::new(initial_simulation_state))
     }
-}
 
-async fn step_simulation_batch(run: Arc<Mutex<SimulationRun>>) -> Result<StepOutcome, String> {
-    tokio::task::spawn_blocking(move || {
-        let real_time_start = std::time::Instant::now();
-
-        let mut guard = run.lock().map_err(|_| "Poisoned mutex lock".to_string())?;
-        let sim_run = &mut *guard;
-
-        let max_hours = sim_run.initial.simulation_settings.max_days * 24.0;
-        let step_interval_h = sim_run.initial.simulation_settings.step_interval_hours;
-
-        // Run several simulation steps/ticks until real elapsed duration expires.
-        loop {
-            if sim_run.hours_since_epoch() >= max_hours {
-                return Ok(StepOutcome {
-                    done: true,
-                    status_line: format!(
-                        "Reached max time: {:.2} hours ({:.2} days).",
-                        max_hours,
-                        max_hours / 24.0
-                    ),
-                    latest_telemetry: sim_run.latest_telemetry.clone(),
-                });
-            }
-
-            let telemetry = sim_run.step().map_err(|e| format!("{e}"))?;
-
-            if telemetry.is_deorbited {
-                let deorbit_h = (telemetry.hours_since_epoch - step_interval_h).max(0.0);
-                return Ok(StepOutcome {
-                    done: true,
-                    status_line: format!(
-                        "Satellite deorbited at {:.2} hours ({:.2} days).",
-                        deorbit_h,
-                        deorbit_h / 24.0
-                    ),
-                    latest_telemetry: sim_run.latest_telemetry.clone(),
-                });
-            }
-
-            // Run minimum one iteration. Break if wallclock time exceeded between UI updates.
-            if real_time_start.elapsed().as_millis() >= SIMULATION_MAX_UI_UPDATE_PERIOD_MS as u128 {
-                break;
-            }
-        }
-
-        let latest_telemetry = sim_run.latest_telemetry.as_ref();
-        Ok(StepOutcome {
-            done: latest_telemetry
-                .map(|x| x.hours_since_epoch >= max_hours)
-                .unwrap_or(false),
-            status_line: match latest_telemetry {
-                Some(tt) => format!("Sim running... t = {:.2} days", tt.hours_since_epoch / 24.0),
-                None => "Sim running...".to_string(),
-            },
-            latest_telemetry: sim_run.latest_telemetry.clone(),
-        })
-    })
-    .await
-    .map_err(|_| "Join error stepping simulation".to_string())?
-}
-
-impl MyApp {
     /// Serialize the current `input_fields` to a pretty JSON string.
     pub fn export_inputs_json(&self) -> Result<String, String> {
         serde_json::to_string_pretty(&self.input_fields).map_err(|e| e.to_string())
@@ -401,18 +258,551 @@ impl MyApp {
     pub fn import_inputs_json(&mut self, json: &str) -> Result<(), String> {
         let parsed: MyAppInputFields = serde_json::from_str(json).map_err(|e| e.to_string())?;
         self.input_fields = parsed;
-
-        // If your UI or simulation expects the TLE/derived fields to refresh,
-        // you can optionally recalc/propagate here. For example:
-        // self.update_tle_from_fields();   // only if your `input_fields` should drive TLE
-        // self.run_status.clear();
-
         Ok(())
     }
 }
 
-pub fn main() -> iced::Result {
-    iced::application("Squid Orbit Simulator", MyApp::update, MyApp::view)
-        .subscription(MyApp::subscription)
-        .run()
+// -------------------------------------
+// Background worker
+// -------------------------------------
+fn spawn_stepper_loop(run: Arc<Mutex<SimulationRun>>, tx: StepTx) {
+    std::thread::spawn(move || {
+        // Loop until done, sending periodic StepOutcome updates
+        loop {
+            let real_time_start = Instant::now();
+
+            // Scope the lock
+            let mut guard = match run.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    let _ = tx.send(Err("Poisoned mutex lock".to_string()));
+                    break;
+                }
+            };
+            let sim_run = &mut *guard;
+
+            let max_hours = sim_run.initial.simulation_settings.max_days * 24.0;
+            let step_interval_h = sim_run.initial.simulation_settings.step_interval_hours;
+
+            // Inner loop: do work for up to SIMULATION_MAX_UI_UPDATE_PERIOD_MS, then send update
+            let outcome = loop {
+                if sim_run.hours_since_epoch() >= max_hours {
+                    break Ok(StepOutcome {
+                        done: true,
+                        status_line: format!(
+                            "Reached max time: {:.2} hours ({:.2} days).",
+                            max_hours,
+                            max_hours / 24.0
+                        ),
+                        latest_telemetry: sim_run.latest_telemetry.clone(),
+                    });
+                }
+
+                match sim_run.step().map_err(|e| format!("{e}")) {
+                    Ok(telemetry) => {
+                        if telemetry.is_deorbited {
+                            let deorbit_h =
+                                (telemetry.hours_since_epoch - step_interval_h).max(0.0);
+                            break Ok(StepOutcome {
+                                done: true,
+                                status_line: format!(
+                                    "Satellite deorbited at {:.2} hours ({:.2} days).",
+                                    deorbit_h,
+                                    deorbit_h / 24.0
+                                ),
+                                latest_telemetry: sim_run.latest_telemetry.clone(),
+                            });
+                        }
+                    }
+                    Err(e) => break Err(e),
+                }
+
+                if real_time_start.elapsed().as_millis()
+                    >= SIMULATION_MAX_UI_UPDATE_PERIOD_MS as u128
+                {
+                    let latest_telemetry = sim_run.latest_telemetry.as_ref().cloned();
+                    let status = latest_telemetry.as_ref().map(|tt| {
+                        format!("Sim running... t = {:.2} days", tt.hours_since_epoch / 24.0)
+                    });
+                    break Ok(StepOutcome {
+                        done: latest_telemetry
+                            .as_ref()
+                            .map(|x| x.hours_since_epoch >= max_hours)
+                            .unwrap_or(false),
+                        status_line: status.unwrap_or_else(|| "Sim running...".to_string()),
+                        latest_telemetry,
+                    });
+                }
+            };
+
+            drop(sim_run); // explicit before unlocking guard
+            drop(guard);
+
+            // Send update
+            let done_now = match &outcome {
+                Ok(o) => o.done,
+                Err(_) => true,
+            };
+            if tx.send(outcome).is_err() {
+                // UI dropped the receiver
+                break;
+            }
+            if done_now {
+                break;
+            }
+        }
+    });
+}
+
+// -------------------------------------
+// The form parsing helpers (unchanged logic)
+// -------------------------------------
+use crate::ui::fields::{
+    GroundStationField as GS, SatelliteField as SF, SimulationBoolField as SBF,
+    SimulationField as SimF,
+};
+
+fn parse_required_f64(label: &str, s: &str) -> Result<f64, String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err(format!("'{}' is required", label));
+    }
+    trimmed
+        .parse::<f64>()
+        .map_err(|_| format!("Invalid number for '{}'", label))
+}
+
+fn parse_optional_f64(s: &str) -> Option<f64> {
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        t.parse::<f64>().ok()
+    }
+}
+
+impl MyApp {
+    pub fn read_ground_station(&self) -> Result<crate::initial_state_model::GroundStation, String> {
+        let name = self
+            .input_fields
+            .ground_station_inputs
+            .get(&GS::Name)
+            .cloned()
+            .unwrap_or_default();
+
+        let lat = parse_required_f64(
+            GS::LatitudeDeg.label(),
+            self.input_fields
+                .ground_station_inputs
+                .get(&GS::LatitudeDeg)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let lon = parse_required_f64(
+            GS::LongitudeDeg.label(),
+            self.input_fields
+                .ground_station_inputs
+                .get(&GS::LongitudeDeg)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let elev_opt = self
+            .input_fields
+            .ground_station_inputs
+            .get(&GS::ElevationM)
+            .map(String::as_str)
+            .and_then(parse_optional_f64);
+
+        let alt = parse_required_f64(
+            GS::AltitudeM.label(),
+            self.input_fields
+                .ground_station_inputs
+                .get(&GS::AltitudeM)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let min_el = parse_required_f64(
+            GS::MinElevationDeg.label(),
+            self.input_fields
+                .ground_station_inputs
+                .get(&GS::MinElevationDeg)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+
+        crate::initial_state_model::GroundStation::new(name, lat, lon, elev_opt, alt, min_el)
+    }
+
+    pub fn read_satellite(&self) -> Result<crate::initial_state_model::Satellite, String> {
+        let name = self
+            .input_fields
+            .satellite_inputs
+            .get(&SF::Name)
+            .cloned()
+            .unwrap_or_default();
+
+        let cd = parse_required_f64(
+            SF::DragCoefficient.label(),
+            self.input_fields
+                .satellite_inputs
+                .get(&SF::DragCoefficient)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let area = parse_required_f64(
+            SF::DragAreaM2.label(),
+            self.input_fields
+                .satellite_inputs
+                .get(&SF::DragAreaM2)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+
+        Ok(crate::initial_state_model::Satellite {
+            name,
+            drag_coefficient: cd,
+            drag_area_m2: area,
+        })
+    }
+
+    pub fn read_simulation_settings(
+        &self,
+    ) -> Result<crate::initial_state_model::SimulationSettings, String> {
+        let max_days = parse_required_f64(
+            SimF::MaxDays.label(),
+            self.input_fields
+                .simulation_inputs
+                .get(&SimF::MaxDays)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let step_hours = parse_required_f64(
+            SimF::StepIntervalHours.label(),
+            self.input_fields
+                .simulation_inputs
+                .get(&SimF::StepIntervalHours)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?;
+        let enable_sw = *self
+            .input_fields
+            .simulation_bools
+            .get(&SBF::DragPowerEnableSpaceWeather)
+            .unwrap_or(&false);
+
+        if max_days <= 0.0 {
+            return Err("Max Days must be > 0".into());
+        }
+        if step_hours <= 0.0 {
+            return Err("Step Interval (hours) must be > 0".into());
+        }
+
+        Ok(crate::initial_state_model::SimulationSettings {
+            max_days,
+            step_interval_hours: step_hours,
+            drag_power_enable_space_weather: enable_sw,
+        })
+    }
+}
+
+// -------------------------------------
+// egui UI
+// -------------------------------------
+use strum::IntoEnumIterator;
+
+impl eframe::App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Poll worker (if running)
+        self.poll_worker(ctx);
+
+        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.heading("Squid Orbit Simulator");
+                if self.is_running {
+                    ui.label(RichText::new("Running…").strong());
+                }
+            });
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add_space(8.0);
+
+                    // ------------------------------
+                    // TLE inputs
+                    // ------------------------------
+                    ui.heading("TLE");
+                    ui.horizontal(|ui| {
+                        ui.label("TLE Line 0 (Name)");
+                        ui.text_edit_singleline(&mut self.tle_line0);
+                    });
+                    let mut need_parse = false;
+                    ui.horizontal(|ui| {
+                        ui.label("TLE Line 1");
+                        let before = self.tle_line1.clone();
+                        if ui.text_edit_singleline(&mut self.tle_line1).changed()
+                            && self.tle_line1 != before
+                        {
+                            need_parse = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("TLE Line 2");
+                        let before = self.tle_line2.clone();
+                        if ui.text_edit_singleline(&mut self.tle_line2).changed()
+                            && self.tle_line2 != before
+                        {
+                            need_parse = true;
+                        }
+                    });
+                    if need_parse {
+                        self.try_parse_tle();
+                    }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+
+                    // ------------------------------
+                    // Orbital Parameters
+                    // ------------------------------
+                    ui.heading("Orbital Parameters");
+                    for field in OrbitalField::iter() {
+                        let label = field.display_label();
+                        let val = self
+                            .input_fields
+                            .orbital_params
+                            .get(&field)
+                            .cloned()
+                            .unwrap_or_default();
+                        let mut val_mut = val.clone();
+                        ui.horizontal(|ui| {
+                            ui.label(label); // .min_size.(egui::vec2(180.0, 0.0));
+                            if ui.text_edit_singleline(&mut val_mut).changed() {
+                                self.input_fields
+                                    .orbital_params
+                                    .insert(field.clone(), val_mut.clone());
+                                self.update_tle_from_fields();
+                            }
+                        });
+                    }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+
+                    // ------------------------------
+                    // Ground Station
+                    // ------------------------------
+                    ui.heading("Ground Station");
+                    for f in GroundStationField::iter() {
+                        let label = f.label();
+                        let val = self
+                            .input_fields
+                            .ground_station_inputs
+                            .get(&f)
+                            .cloned()
+                            .unwrap_or_default();
+                        let mut val_mut = val.clone();
+                        ui.horizontal(|ui| {
+                            ui.label(label); //.min_size(egui::vec2(180.0, 0.0));
+                            if ui.text_edit_singleline(&mut val_mut).changed() {
+                                self.input_fields
+                                    .ground_station_inputs
+                                    .insert(f.clone(), val_mut.clone());
+                            }
+                        });
+                    }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+
+                    // ------------------------------
+                    // Satellite
+                    // ------------------------------
+                    ui.heading("Satellite");
+                    for f in SatelliteField::iter() {
+                        let label = f.label();
+                        let val = self
+                            .input_fields
+                            .satellite_inputs
+                            .get(&f)
+                            .cloned()
+                            .unwrap_or_default();
+                        let mut val_mut = val.clone();
+                        ui.horizontal(|ui| {
+                            ui.label(label); // .min_size(egui::vec2(180.0, 0.0));
+                            if ui.text_edit_singleline(&mut val_mut).changed() {
+                                self.input_fields
+                                    .satellite_inputs
+                                    .insert(f.clone(), val_mut.clone());
+                            }
+                        });
+                    }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+
+                    // ------------------------------
+                    // Simulation Settings
+                    // ------------------------------
+                    ui.heading("Simulation Settings");
+                    for f in SimulationField::iter() {
+                        let label = f.label();
+                        let val = self
+                            .input_fields
+                            .simulation_inputs
+                            .get(&f)
+                            .cloned()
+                            .unwrap_or_default();
+                        let mut val_mut = val.clone();
+                        ui.horizontal(|ui| {
+                            ui.label(label); // .min_size(egui::vec2(180.0, 0.0));
+                            if ui.text_edit_singleline(&mut val_mut).changed() {
+                                self.input_fields
+                                    .simulation_inputs
+                                    .insert(f.clone(), val_mut.clone());
+                            }
+                        });
+                    }
+                    for f in SimulationBoolField::iter() {
+                        let label = f.label();
+                        let value = *self.input_fields.simulation_bools.get(&f).unwrap_or(&false);
+                        let mut value_mut = value;
+                        ui.horizontal(|ui| {
+                            ui.label(label); // .min_size(egui::vec2(180.0, 0.0));
+                            if ui.checkbox(&mut value_mut, "").changed() {
+                                self.input_fields
+                                    .simulation_bools
+                                    .insert(f.clone(), value_mut);
+                            }
+                        });
+                    }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+
+                    // ------------------------------
+                    // Inputs JSON I/O
+                    // ------------------------------
+                    ui.heading("Import/Export Simulation Configuration as JSON");
+                    ui.horizontal(|ui| {
+                        if ui.button("Export Inputs").clicked() {
+                            self.on_export_inputs_json();
+                        }
+                        if ui.button("Import Inputs").clicked() {
+                            self.on_import_inputs_json();
+                        }
+                    });
+                    egui::ScrollArea::vertical()
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.inputs_json_buffer)
+                                    .font(FontId::monospace(14.0))
+                                    .hint_text("Paste or edit inputs JSON here…"),
+                            );
+                        });
+
+                    ui.add_space(8.0);
+                    ui.separator();
+
+                    // ------------------------------
+                    // Run bar
+                    // ------------------------------
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(!self.is_running, egui::Button::new("Run"))
+                            .clicked()
+                        {
+                            self.on_button_pressed_run(ctx);
+                        }
+                        ui.label(&self.run_status);
+                    });
+
+                    ui.add_space(8.0);
+                    ui.separator();
+
+                    // ------------------------------
+                    // Telemetry
+                    // ------------------------------
+                    ui.heading("Latest Telemetry");
+                    match &self.latest_telemetry {
+                        Some(t) => {
+                            let angles_preview = if t.elevation_angles_degrees.is_empty() {
+                                "[]".to_string()
+                            } else {
+                                let shown = t
+                                    .elevation_angles_degrees
+                                    .iter()
+                                    .take(5)
+                                    .map(|v| format!("{:.2}", v))
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                if t.elevation_angles_degrees.len() > 5 {
+                                    format!(
+                                        "[{}, …] ({} total)",
+                                        shown,
+                                        t.elevation_angles_degrees.len()
+                                    )
+                                } else {
+                                    format!("[{}]", shown)
+                                }
+                            };
+
+                            grid_kv(ui, "Data Point Timestamp", &t.time.as_iso8601());
+                            grid_kv(
+                                ui,
+                                "Time since epoch",
+                                &format!(
+                                    "{:.3} hours = {:.3} days",
+                                    t.hours_since_epoch,
+                                    t.hours_since_epoch / 24.0
+                                ),
+                            );
+                            grid_kv(ui, "ITRF position", &format!("{:?}", t.position_itrf));
+                            grid_kv(ui, "ITRF velocity", &format!("{:?}", t.velocity_itrf));
+                            grid_kv(ui, "Speed (m/s)", &format!("{:.3}", t.speed_m_per_s));
+                            grid_kv(ui, "Elevation (km)", &format!("{:.3}", t.elevation_km));
+                            grid_kv(ui, "Elevation angles (deg)", &angles_preview);
+                            grid_kv(ui, "Drag power (W)", &format!("{:.3}", t.drag_power_watts));
+                            grid_kv(
+                                ui,
+                                "Irradiance approx (W/m²)",
+                                &format!("{:.1}", t.irradiance_approx_w_per_m2),
+                            );
+                            grid_kv(
+                                ui,
+                                "Irradiance (W/m²)",
+                                &format!("{:.1}", t.irradiance_w_per_m2),
+                            );
+                            grid_kv(ui, "Local time (h)", &format!("{:.3}", t.local_time_hours));
+                            grid_kv(ui, "Deorbited?", if t.is_deorbited { "yes" } else { "no" });
+                        }
+                        None => {
+                            ui.label("No telemetry yet. Press Run to start.");
+                        }
+                    }
+                });
+        });
+    }
+}
+
+fn grid_kv(ui: &mut egui::Ui, key: &str, val: &str) {
+    ui.horizontal(|ui| {
+        ui.label(key); // .min_size(egui::vec2(180.0, 0.0));
+        ui.label(val);
+    });
+}
+
+// -------------------------------------
+// eframe entry point
+// -------------------------------------
+pub fn main() -> eframe::Result<()> {
+    let native_options = eframe::NativeOptions::default();
+    eframe::run_native(
+        "Squid Orbit Simulator",
+        native_options,
+        Box::new(|_cc| Ok(Box::new(MyApp::new()))),
+    )
 }
