@@ -3,34 +3,83 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
+use crate::initial_state_model::TleData;
+
 #[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter, Serialize, Deserialize)]
-pub enum OrbitalField {
+pub enum TleParameterField {
+    // Name,
+    IntlDesig,
+    SatNum,
+    DesigYear,
+    DesigLaunch,
+    DesigPiece,
+    Epoch,
+    MeanMotionDot,
+    MeanMotionDotDot,
+    BStar,
+    EphemType,
+    ElementNum,
     Inclination,
     Raan,
     Eccentricity,
     ArgOfPerigee,
     MeanAnomaly,
     MeanMotion,
-    Epoch,
+    RevNum,
 }
 
-impl OrbitalField {
+impl TleParameterField {
     pub fn display_label(&self) -> &'static str {
         match self {
-            OrbitalField::Inclination => "Inclination (deg)",
-            OrbitalField::Raan => "RAAN (deg)",
-            OrbitalField::Eccentricity => "Eccentricity",
-            OrbitalField::ArgOfPerigee => "Argument of Perigee (deg)",
-            OrbitalField::MeanAnomaly => "Mean Anomaly (deg)",
-            OrbitalField::MeanMotion => "Mean Motion (rev/day)",
-            OrbitalField::Epoch => "Epoch",
+            // TleParameterField::Name => "Satellite Name",
+            TleParameterField::IntlDesig => "International Designator",
+            TleParameterField::SatNum => "Satellite NORAD Number",
+            TleParameterField::DesigYear => "Launch Year",
+            TleParameterField::DesigLaunch => "Launch Number of Year",
+            TleParameterField::DesigPiece => "Launch Piece",
+            TleParameterField::Epoch => "Epoch",
+            TleParameterField::MeanMotionDot => "1st Derivative of Mean Motion (rev/day²)",
+            TleParameterField::MeanMotionDotDot => "2nd Derivative of Mean Motion (rev/day³)",
+            TleParameterField::BStar => "B* (1/Earth radii)",
+            TleParameterField::EphemType => "Ephemeris Type",
+            TleParameterField::ElementNum => "Element Number",
+            TleParameterField::Inclination => "Inclination (deg)",
+            TleParameterField::Raan => "RAAN (deg)",
+            TleParameterField::Eccentricity => "Eccentricity",
+            TleParameterField::ArgOfPerigee => "Argument of Perigee (deg)",
+            TleParameterField::MeanAnomaly => "Mean Anomaly (deg)",
+            TleParameterField::MeanMotion => "Mean Motion (rev/day)",
+            TleParameterField::RevNum => "Revolution Number",
+        }
+    }
+
+    /// Stringify the corresponding value from `TleData` for UI inputs.
+    /// Adjust formatting/precision as needed for your app.
+    pub fn format_value(&self, t: &TleData) -> String {
+        match self {
+            // TleParameterField::Name => t.name.clone(),
+            TleParameterField::IntlDesig => t.intl_desig.clone(),
+            TleParameterField::SatNum => format!("{}", t.sat_num),
+            TleParameterField::DesigYear => format!("{}", t.desig_year),
+            TleParameterField::DesigLaunch => format!("{}", t.desig_launch),
+            TleParameterField::DesigPiece => t.desig_piece.clone(),
+            TleParameterField::Epoch => t.epoch.as_iso8601(),
+            TleParameterField::MeanMotionDot => format!("{}", t.mean_motion_dot),
+            TleParameterField::MeanMotionDotDot => format!("{}", t.mean_motion_dot_dot),
+            TleParameterField::BStar => format!("{}", t.bstar),
+            TleParameterField::EphemType => format!("{}", t.ephem_type),
+            TleParameterField::ElementNum => format!("{}", t.element_num),
+            TleParameterField::Inclination => format!("{}", t.inclination),
+            TleParameterField::Raan => format!("{}", t.raan),
+            TleParameterField::Eccentricity => format!("{}", t.eccen),
+            TleParameterField::ArgOfPerigee => format!("{}", t.arg_of_perigee),
+            TleParameterField::MeanAnomaly => format!("{}", t.mean_anomaly),
+            TleParameterField::MeanMotion => format!("{}", t.mean_motion),
+            TleParameterField::RevNum => format!("{}", t.rev_num),
         }
     }
 }
 
-// -------------------------------------
-// field enums for the forms
-// -------------------------------------
 #[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter, Serialize, Deserialize)]
 pub enum GroundStationField {
     Name,
@@ -104,5 +153,5 @@ pub struct MyAppInputFields {
     pub simulation_inputs: HashMap<SimulationField, String>,
     pub simulation_bools: HashMap<SimulationBoolField, bool>,
 
-    pub orbital_params: HashMap<OrbitalField, String>,
+    pub tle_parameter_inputs: HashMap<TleParameterField, String>,
 }
