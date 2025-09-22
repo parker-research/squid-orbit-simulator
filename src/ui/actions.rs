@@ -151,6 +151,12 @@ impl MyApp {
                     tle.mean_motion = v;
                 }
             }
+
+            // Push the TLE line updates back to the 2-line entry.
+            if let Ok(to_tle) = tle.to_satkit_tle().to_2line() {
+                self.tle_line1 = to_tle[0].clone();
+                self.tle_line2 = to_tle[1].clone();
+            }
         }
     }
 
