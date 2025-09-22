@@ -196,26 +196,28 @@ impl MyApp {
     }
 
     fn poll_worker(&mut self, ctx: &egui::Context) {
+        let mut should_make_worker_rx_null: bool = false;
+
         if let Some(rx) = &self.worker_rx {
             for msg in rx.try_iter() {
-                // match msg {
-                //     Ok(outcome) => {
-                //         self.run_status = outcome.status_line;
-                //         self.latest_telemetry = outcome.latest_telemetry;
+                match msg {
+                    Ok(outcome) => {
+                        self.run_status = outcome.status_line;
+                        self.latest_telemetry = outcome.latest_telemetry;
 
-                //         if outcome.done {
-                //             self.is_running = false;
-                //             self.simulation_run = None;
-                //             self.worker_rx = None;
-                //         }
-                //     }
-                //     Err(err) => {
-                //         self.run_status = format!("Error during simulation step: {err}");
-                //         self.is_running = false;
-                //         self.simulation_run = None;
-                //         self.worker_rx = None;
-                //     }
-                // }
+                        if outcome.done {
+                            self.is_running = false;
+                            self.simulation_run = None;
+                            should_make_worker_rx_null = true;
+                        }
+                    }
+                    Err(err) => {
+                        self.run_status = format!("Error during simulation step: {err}");
+                        self.is_running = false;
+                        self.simulation_run = None;
+                        should_make_worker_rx_null = true;
+                    }
+                }
             }
 
             // While running, ask egui to repaint periodically.
@@ -224,6 +226,10 @@ impl MyApp {
                     SIMULATION_MAX_UI_UPDATE_PERIOD_MS as u64,
                 ));
             }
+        }
+
+        if should_make_worker_rx_null {
+            self.worker_rx = None;
         }
     }
 
@@ -335,7 +341,6 @@ fn spawn_stepper_loop(run: Arc<Mutex<SimulationRun>>, tx: StepTx) {
                 }
             };
 
-            drop(sim_run); // explicit before unlocking guard
             drop(guard);
 
             // Send update
