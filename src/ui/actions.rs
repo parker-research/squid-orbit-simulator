@@ -66,30 +66,30 @@ impl MyApp {
     fn try_parse_tle(&mut self) {
         if let Ok(satkit_tle) = TLE::load_2line(&self.tle_line1, &self.tle_line2) {
             self.tle_data = Some(TleData::from_satkit_tle(&satkit_tle));
-            self.input_fields.orbital_params.insert(
+            self.input_fields.tle_parameter_inputs.insert(
                 TleParameterField::Inclination,
                 format!("{}", satkit_tle.inclination),
             );
             self.input_fields
-                .orbital_params
+                .tle_parameter_inputs
                 .insert(TleParameterField::Raan, format!("{}", satkit_tle.raan));
-            self.input_fields.orbital_params.insert(
+            self.input_fields.tle_parameter_inputs.insert(
                 TleParameterField::Eccentricity,
                 format!("{}", satkit_tle.eccen),
             );
-            self.input_fields.orbital_params.insert(
+            self.input_fields.tle_parameter_inputs.insert(
                 TleParameterField::ArgOfPerigee,
                 format!("{}", satkit_tle.arg_of_perigee),
             );
-            self.input_fields.orbital_params.insert(
+            self.input_fields.tle_parameter_inputs.insert(
                 TleParameterField::MeanAnomaly,
                 format!("{}", satkit_tle.mean_anomaly),
             );
-            self.input_fields.orbital_params.insert(
+            self.input_fields.tle_parameter_inputs.insert(
                 TleParameterField::MeanMotion,
                 format!("{}", satkit_tle.mean_motion),
             );
-            self.input_fields.orbital_params.insert(
+            self.input_fields.tle_parameter_inputs.insert(
                 TleParameterField::Epoch,
                 format!("{}", satkit_tle.epoch.as_iso8601()),
             );
@@ -104,7 +104,7 @@ impl MyApp {
         if let Some(tle) = &mut self.tle_data {
             if let Some(val) = self
                 .input_fields
-                .orbital_params
+                .tle_parameter_inputs
                 .get(&TleParameterField::Inclination)
             {
                 if let Ok(v) = val.parse() {
@@ -113,7 +113,7 @@ impl MyApp {
             }
             if let Some(val) = self
                 .input_fields
-                .orbital_params
+                .tle_parameter_inputs
                 .get(&TleParameterField::Raan)
             {
                 if let Ok(v) = val.parse() {
@@ -122,7 +122,7 @@ impl MyApp {
             }
             if let Some(val) = self
                 .input_fields
-                .orbital_params
+                .tle_parameter_inputs
                 .get(&TleParameterField::Eccentricity)
             {
                 if let Ok(v) = val.parse() {
@@ -131,7 +131,7 @@ impl MyApp {
             }
             if let Some(val) = self
                 .input_fields
-                .orbital_params
+                .tle_parameter_inputs
                 .get(&TleParameterField::ArgOfPerigee)
             {
                 if let Ok(v) = val.parse() {
@@ -140,7 +140,7 @@ impl MyApp {
             }
             if let Some(val) = self
                 .input_fields
-                .orbital_params
+                .tle_parameter_inputs
                 .get(&TleParameterField::MeanAnomaly)
             {
                 if let Ok(v) = val.parse() {
@@ -149,7 +149,7 @@ impl MyApp {
             }
             if let Some(val) = self
                 .input_fields
-                .orbital_params
+                .tle_parameter_inputs
                 .get(&TleParameterField::MeanMotion)
             {
                 if let Ok(v) = val.parse() {
@@ -349,7 +349,7 @@ impl eframe::App for MyApp {
                         let label = field.display_label();
                         let val = self
                             .input_fields
-                            .orbital_params
+                            .tle_parameter_inputs
                             .get(&field)
                             .cloned()
                             .unwrap_or_default();
@@ -358,7 +358,7 @@ impl eframe::App for MyApp {
                             ui.label(label); // .min_size.(egui::vec2(180.0, 0.0));
                             if ui.text_edit_singleline(&mut val_mut).changed() {
                                 self.input_fields
-                                    .orbital_params
+                                    .tle_parameter_inputs
                                     .insert(field.clone(), val_mut.clone());
                                 self.update_tle_from_fields();
                             }
