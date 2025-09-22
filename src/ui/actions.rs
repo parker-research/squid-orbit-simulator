@@ -4,8 +4,8 @@ use crate::{
     satellite_state::{SimulationRun, SimulationStateAtStep},
     ui::{
         fields::{
-            GroundStationField, MyAppInputFields, OrbitalField, SatelliteField,
-            SimulationBoolField, SimulationField,
+            GroundStationField, MyAppInputFields, SatelliteField, SimulationBoolField,
+            SimulationField, TleParameterField,
         },
         sim_background_worker::spawn_stepper_loop,
     },
@@ -67,29 +67,30 @@ impl MyApp {
         if let Ok(satkit_tle) = TLE::load_2line(&self.tle_line1, &self.tle_line2) {
             self.tle_data = Some(TleData::from_satkit_tle(&satkit_tle));
             self.input_fields.orbital_params.insert(
-                OrbitalField::Inclination,
+                TleParameterField::Inclination,
                 format!("{}", satkit_tle.inclination),
             );
             self.input_fields
                 .orbital_params
-                .insert(OrbitalField::Raan, format!("{}", satkit_tle.raan));
-            self.input_fields
-                .orbital_params
-                .insert(OrbitalField::Eccentricity, format!("{}", satkit_tle.eccen));
+                .insert(TleParameterField::Raan, format!("{}", satkit_tle.raan));
             self.input_fields.orbital_params.insert(
-                OrbitalField::ArgOfPerigee,
+                TleParameterField::Eccentricity,
+                format!("{}", satkit_tle.eccen),
+            );
+            self.input_fields.orbital_params.insert(
+                TleParameterField::ArgOfPerigee,
                 format!("{}", satkit_tle.arg_of_perigee),
             );
             self.input_fields.orbital_params.insert(
-                OrbitalField::MeanAnomaly,
+                TleParameterField::MeanAnomaly,
                 format!("{}", satkit_tle.mean_anomaly),
             );
             self.input_fields.orbital_params.insert(
-                OrbitalField::MeanMotion,
+                TleParameterField::MeanMotion,
                 format!("{}", satkit_tle.mean_motion),
             );
             self.input_fields.orbital_params.insert(
-                OrbitalField::Epoch,
+                TleParameterField::Epoch,
                 format!("{}", satkit_tle.epoch.as_iso8601()),
             );
             self.run_status.clear();
@@ -104,13 +105,17 @@ impl MyApp {
             if let Some(val) = self
                 .input_fields
                 .orbital_params
-                .get(&OrbitalField::Inclination)
+                .get(&TleParameterField::Inclination)
             {
                 if let Ok(v) = val.parse() {
                     tle.inclination = v;
                 }
             }
-            if let Some(val) = self.input_fields.orbital_params.get(&OrbitalField::Raan) {
+            if let Some(val) = self
+                .input_fields
+                .orbital_params
+                .get(&TleParameterField::Raan)
+            {
                 if let Ok(v) = val.parse() {
                     tle.raan = v;
                 }
@@ -118,7 +123,7 @@ impl MyApp {
             if let Some(val) = self
                 .input_fields
                 .orbital_params
-                .get(&OrbitalField::Eccentricity)
+                .get(&TleParameterField::Eccentricity)
             {
                 if let Ok(v) = val.parse() {
                     tle.eccen = v;
@@ -127,7 +132,7 @@ impl MyApp {
             if let Some(val) = self
                 .input_fields
                 .orbital_params
-                .get(&OrbitalField::ArgOfPerigee)
+                .get(&TleParameterField::ArgOfPerigee)
             {
                 if let Ok(v) = val.parse() {
                     tle.arg_of_perigee = v;
@@ -136,7 +141,7 @@ impl MyApp {
             if let Some(val) = self
                 .input_fields
                 .orbital_params
-                .get(&OrbitalField::MeanAnomaly)
+                .get(&TleParameterField::MeanAnomaly)
             {
                 if let Ok(v) = val.parse() {
                     tle.mean_anomaly = v;
@@ -145,7 +150,7 @@ impl MyApp {
             if let Some(val) = self
                 .input_fields
                 .orbital_params
-                .get(&OrbitalField::MeanMotion)
+                .get(&TleParameterField::MeanMotion)
             {
                 if let Ok(v) = val.parse() {
                     tle.mean_motion = v;
@@ -340,7 +345,7 @@ impl eframe::App for MyApp {
                     // Orbital Parameters
                     // ------------------------------
                     ui.heading("Orbital Parameters");
-                    for field in OrbitalField::iter() {
+                    for field in TleParameterField::iter() {
                         let label = field.display_label();
                         let val = self
                             .input_fields

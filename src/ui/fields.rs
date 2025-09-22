@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq, EnumIter, Serialize, Deserialize)]
-pub enum OrbitalField {
+pub enum TleParameterField {
     Inclination,
     Raan,
     Eccentricity,
@@ -14,16 +14,16 @@ pub enum OrbitalField {
     Epoch,
 }
 
-impl OrbitalField {
+impl TleParameterField {
     pub fn display_label(&self) -> &'static str {
         match self {
-            OrbitalField::Inclination => "Inclination (deg)",
-            OrbitalField::Raan => "RAAN (deg)",
-            OrbitalField::Eccentricity => "Eccentricity",
-            OrbitalField::ArgOfPerigee => "Argument of Perigee (deg)",
-            OrbitalField::MeanAnomaly => "Mean Anomaly (deg)",
-            OrbitalField::MeanMotion => "Mean Motion (rev/day)",
-            OrbitalField::Epoch => "Epoch",
+            TleParameterField::Inclination => "Inclination (deg)",
+            TleParameterField::Raan => "RAAN (deg)",
+            TleParameterField::Eccentricity => "Eccentricity",
+            TleParameterField::ArgOfPerigee => "Argument of Perigee (deg)",
+            TleParameterField::MeanAnomaly => "Mean Anomaly (deg)",
+            TleParameterField::MeanMotion => "Mean Motion (rev/day)",
+            TleParameterField::Epoch => "Epoch",
         }
     }
 }
@@ -104,5 +104,5 @@ pub struct MyAppInputFields {
     pub simulation_inputs: HashMap<SimulationField, String>,
     pub simulation_bools: HashMap<SimulationBoolField, bool>,
 
-    pub orbital_params: HashMap<OrbitalField, String>,
+    pub orbital_params: HashMap<TleParameterField, String>,
 }

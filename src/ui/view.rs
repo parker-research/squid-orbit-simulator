@@ -1,7 +1,7 @@
 use crate::ui::{
     actions::Message,
     fields::{
-        GroundStationField, OrbitalField, SatelliteField, SimulationBoolField, SimulationField,
+        GroundStationField, TleParameterField, SatelliteField, SimulationBoolField, SimulationField,
     },
 };
 use iced::{
@@ -43,7 +43,7 @@ impl MyApp {
         // ------------------------------
         // Orbital param inputs
         // ------------------------------
-        let param_inputs = OrbitalField::iter().map(|field| {
+        let param_inputs = TleParameterField::iter().map(|field| {
             let label = field.display_label();
             let value = self
                 .input_fields
