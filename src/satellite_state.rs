@@ -4,7 +4,7 @@ use satkit::frametransform::qgcrf2itrf;
 use satkit::frametransform::qteme2itrf;
 use satkit::lpephem::sun::pos_gcrf;
 use satkit::sgp4::{SGP4Error, sgp4};
-use satkit::{Instant, types::Vec3};
+use satkit::{Instant, Vector3};
 
 use crate::initial_state_model::InitialSimulationState;
 
@@ -23,7 +23,7 @@ pub fn calculate_elevation_from_location_km(position_km: &[f64; 3]) -> f64 {
 
 /// Compute the satellite's local solar time in hours [0, 24).
 pub fn calculate_local_solar_time_hours(longitude_deg: f64, time: &Instant) -> f64 {
-    let jd = time.as_jd() + 0.5; // jd=0.0 happens at 12:00 UTC
+    let jd = time.as_jd_utc() + 0.5; // jd=0.0 happens at 12:00 UTC
     let fractional_day = jd.fract();
     let utc_hours = fractional_day * 24.0;
     let local_time = utc_hours + longitude_deg / 15.0;
@@ -76,7 +76,7 @@ pub fn calculate_power_from_atmospheric_drag_watts(
     enable_space_weather: bool,
 ) -> f64 {
     let (rho_density_kg_per_m3, _temperature_kelvin) = // TODO: Encorporate space weather data by passing in a date.
-        satkit::nrlmsise::nrlmsise(elevation_km, latitude_deg, longitude_deg, time, enable_space_weather);
+        satkit::nrlmsise::nrlmsise(elevation_km, latitude_deg, longitude_deg, time.as_ref(), enable_space_weather);
 
     let power_watts = 0.5
         * satellite.drag_coefficient
@@ -97,11 +97,10 @@ pub fn calculate_sun_irradiance_received_approx_w_per_m2(
     // FIXME: This function appears to not work, and must be revisited/reimplemented/re-evaluated.
 
     // Step 1: Get Sun position in GCRF (in meters).
-    let sun_gcrf_m: Vec3 = pos_gcrf(time);
+    let sun_gcrf_m: Vector3 = pos_gcrf(time);
 
     // Step 2: Transform Sun position from GCRF to ITRF.
-    let transform_gcrf_to_itrf = qgcrf2itrf(time).to_rotation_matrix();
-    let sun_itrf_m = transform_gcrf_to_itrf * sun_gcrf_m;
+    let sun_itrf_m = qgcrf2itrf(time) * sun_gcrf_m;
 
     // Step 3: Compute unit vectors and geometry.
     let sat_itrf_vec = nalgebra::Vector3::<f64>::from_row_slice(satellite_position_itrf_m);
@@ -156,10 +155,9 @@ pub fn calculate_sun_irradiance_received_w_per_m2(
 
     let sun_itrf_m = {
         // Step 1: Get Sun position in GCRF (in meters).
-        let sun_gcrf_m: Vec3 = pos_gcrf(time);
+        let sun_gcrf_m: Vector3 = pos_gcrf(time);
         // Step 2: Transform Sun position from GCRF to ITRF.
-        let transform_gcrf_to_itrf = qgcrf2itrf(time).to_rotation_matrix();
-        transform_gcrf_to_itrf * sun_gcrf_m
+        qgcrf2itrf(time) * sun_gcrf_m
     };
 
     // Step 3: Compute unit vectors and geometry.
@@ -262,12 +260,22 @@ impl SimulationRun {
         let time = self.current_sim_time;
 
         // SGP4 over a single timestamp (slice)
-        let (position_teme, velocity_teme, errs) = sgp4(&mut self.satkit_tle_mut, &[time]);
-        if let Some(err) = errs.first() {
+        let sgp4_result = sgp4(&mut self.satkit_tle_mut, &[time])?;
+        if let Some(err) = sgp4_result.errcode.first() {
             if *err != SGP4Error::SGP4Success {
                 return Err(anyhow::anyhow!("SGP4 error: {}", err));
             }
         }
+        let position_teme = Vector3::from_array([
+            sgp4_result.pos[(0, 0)],
+            sgp4_result.pos[(1, 0)],
+            sgp4_result.pos[(2, 0)],
+        ]);
+        let velocity_teme = Vector3::from_array([
+            sgp4_result.vel[(0, 0)],
+            sgp4_result.vel[(1, 0)],
+            sgp4_result.vel[(2, 0)],
+        ]);
 
         // Transform TEME -> ITRF (cap matrix far in the future like your original)
         let max_tf_time = Instant::new(1767250888000 * 1000);
@@ -276,9 +284,8 @@ impl SimulationRun {
         } else {
             max_tf_time
         };
-        let transform_matrix = qteme2itrf(&tf_time).to_rotation_matrix();
-        let position_itrf_matrix = transform_matrix * position_teme;
-        let velocity_itrf_matrix = transform_matrix * velocity_teme;
+        let position_itrf_matrix = qteme2itrf(&tf_time) * position_teme;
+        let velocity_itrf_matrix = qteme2itrf(&tf_time) * velocity_teme; // FIXME: qteme2itrf can't do velocity (see its docs).
 
         let position_itrf = ITRFCoord::from_slice(position_itrf_matrix.as_slice()).unwrap();
         let velocity_itrf = ITRFCoord::from_slice(velocity_itrf_matrix.as_slice()).unwrap();
